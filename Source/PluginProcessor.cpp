@@ -27,7 +27,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SaturatorProcessor::layout()
  add("postHP","Post HP Hz",10,1500,20,.4f);add("postLP","Post LP Hz",1000,20000,20000,.5f);
  add("character","Character %",0,100,50);add("bias","Bias %",-100,100,0);
  v.add(std::make_unique<C>(juce::ParameterID{"transformer",1},"Transformer",juce::StringArray{"Off","Neve 10468 Input","Neve LO1166 Output","API 2622 + 2520","API 2520 + 2503","1176 UTC Input","1176 Class A Output","1176 Rev F Output"},1));
- v.add(std::make_unique<C>(juce::ParameterID{"tape",1},"Tape",juce::StringArray{"Off","Studer A80 15 IPS","Studer A80 30 IPS","Nakamichi Dragon Metal","Studer J37 Abbey Road 15 IPS"},1));
+ v.add(std::make_unique<C>(juce::ParameterID{"tape",1},"Tape",juce::StringArray{"Off","Studer A80 15 IPS","Studer A80 30 IPS","Nakamichi Dragon Metal","Studer J37 Abbey Road 15 IPS","Budget Cassette Ferric","Budget Cassette Metal"},1));
  v.add(std::make_unique<C>(juce::ParameterID{"circuit",1},"Circuit",juce::StringArray{"Off","Discrete Class A","Class AB","Op-Amp","Triode Tube","Pentode Tube"},1));
  v.add(std::make_unique<C>(juce::ParameterID{"order",1},"Stage Order",juce::StringArray{"Transformer > Tape > Circuit","Transformer > Circuit > Tape","Tape > Transformer > Circuit","Tape > Circuit > Transformer","Circuit > Transformer > Tape","Circuit > Tape > Transformer"},0));
  v.add(std::make_unique<C>(juce::ParameterID{"oversampling",1},"Oversampling",juce::StringArray{"1x","2x","4x","8x"},2));
@@ -43,7 +43,7 @@ void SaturatorProcessor::prepareToPlay(double sampleRate,int block){
  tapeDelayLength=juce::jmax(512,(int)std::ceil(sr*.08));
  for(auto& line:tapeDelay)line.assign((size_t)tapeDelayLength,0.f);
  tapeWrite=0;transportTime=0;
- dryDelayLength=512;
+ dryDelayLength=juce::jmax(1024,(int)std::ceil(sr*.12));
  for(auto& line:dryDelay)line.assign((size_t)dryDelayLength,0.f);
  dryWrite=0;
  for(int i=0;i<4;++i){
@@ -88,14 +88,14 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
   int model=cachedModels[1];if(model==0)return x;
   // Record amp -> biased magnetic storage -> reproduce EQ/head response.
   // Figures are model estimates; nominal bandwidth targets come from manuals.
-  const float head[]={0,32,48,25,36},top[]={0,17500,20500,21500,14500};
+  const float head[]={0,32,48,25,36,90,65},top[]={0,17500,20500,21500,14500,7200,11200};
   // Approximate a correctly AC-biased record path: near-linear below
   // magnetic operating level, then a relatively narrow saturation knee.
   // These model-specific values are voicings, not measured calibrations.
-  const float density[]={0,.90f,.75f,.65f,1.18f};
-  const float knee[]={0,.82f,.88f,.74f,.68f};
-  const float ceiling[]={0,1.20f,1.24f,1.15f,1.12f};
-  const float hfSensitivity[]={0,.20f,.13f,.28f,.34f};
+  const float density[]={0,.90f,.75f,.65f,1.18f,2.3f,1.65f};
+  const float knee[]={0,.82f,.88f,.74f,.68f,.43f,.62f};
+  const float ceiling[]={0,1.20f,1.24f,1.15f,1.12f,.90f,1.03f};
+  const float hfSensitivity[]={0,.20f,.13f,.28f,.34f,.60f,.43f};
   const float lowPole=cachedCoefficients[4],highPole=cachedCoefficients[3];
   s.tapeLow=lowPole*s.tapeLow+(1-lowPole)*x;
   s.tapeHigh=highPole*s.tapeHigh+(1-highPole)*x;
@@ -130,7 +130,7 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
   // Jiles-Atherton hysteresis solver or explicit ultrasonic AC-bias model.
   const float magneticOutput=.94f*equilibrium+.06f*s.magnet;
   const float tapeOutput=(magneticOutput-magnetise(magneticBias))/magneticDrive;
-  const float headBump=(model==4?.10f:.045f)*character*s.tapeLow;
+  const float headBump=(model>=5?.16f:(model==4?.10f:.045f))*character*s.tapeLow;
   return tapeOutput+headBump;
  }
  int model=cachedModels[2];if(model==0)return x;
@@ -190,18 +190,18 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
  auto up=os.processSamplesUp(constInput);
  const float rate=(float)sr*(float)os.getOversamplingFactor();
  cachedModels[0]=juce::jlimit(0,7,(int)*parameters.getRawParameterValue("transformer"));
- cachedModels[1]=juce::jlimit(0,4,(int)*parameters.getRawParameterValue("tape"));
+ cachedModels[1]=juce::jlimit(0,6,(int)*parameters.getRawParameterValue("tape"));
  cachedModels[2]=juce::jlimit(0,5,(int)*parameters.getRawParameterValue("circuit"));
  const float xfHP[]={0,22,12,24,9,28,14,18};
  const float xfLP[]={0,19000,17500,21000,22000,15500,18500,19500};
- const float tapeHP[]={0,32,48,25,36},tapeLP[]={0,17500,20500,21500,14500};
+ const float tapeHP[]={0,32,48,25,36,90,65},tapeLP[]={0,17500,20500,21500,14500,7200,11200};
  const float capHP[]={0,18,32,8,25,45};
  cachedCoefficients[0]=p(xfHP[cachedModels[0]],rate);
  cachedCoefficients[1]=p(xfLP[cachedModels[0]],rate);
  cachedCoefficients[2]=p(xfHP[cachedModels[0]]*.55f,rate);
  cachedCoefficients[3]=p(tapeLP[cachedModels[1]],rate);
  cachedCoefficients[4]=p(tapeHP[cachedModels[1]],rate);
- cachedCoefficients[5]=p(cachedModels[1]==4?500.f:2100.f,rate);
+ cachedCoefficients[5]=p(cachedModels[1]>=5?360.f:(cachedModels[1]==4?500.f:2100.f),rate);
  cachedCoefficients[6]=p(capHP[cachedModels[2]],rate);
  cachedCoefficients[7]=p(cachedModels[2]==3?18500.f:12000.f,rate);
  cachedCoefficients[8]=p(preHP,rate);
@@ -231,11 +231,11 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
  // Model-specific tape transport. The published weighted wow/flutter figures
  // are NOT equivalent to sinusoidal peak modulation; depths are estimates.
  const int tapeModel=cachedModels[1];
- const bool transportOn=*parameters.getRawParameterValue("wowFlutterOn")>.5f && tapeModel>0;
- const float wowHz[]={0,.48f,.55f,.62f,.42f};
- const float flutterHz[]={0,8.2f,9.5f,12.3f,6.4f};
- const float wowPct[]={0,.00012f,.00010f,.00017f,.00034f};
- const float flutterPct[]={0,.00009f,.00008f,.00011f,.00024f};
+ const bool transportOn=(*parameters.getRawParameterValue("wowFlutterOn")>.5f || tapeModel>=5) && tapeModel>0;
+ const float wowHz[]={0,.48f,.55f,.62f,.42f,.73f,.68f};
+ const float flutterHz[]={0,8.2f,9.5f,12.3f,6.4f,11.5f,10.2f};
+ const float wowPct[]={0,.00012f,.00010f,.00017f,.00034f,.0032f,.0021f};
+ const float flutterPct[]={0,.00009f,.00008f,.00011f,.00024f,.0018f,.0012f};
  const float delayBase=(float)(sr*.025);
  if(transportOn)for(int i=0;i<count;++i){
   const double t=transportTime;transportTime+=1.0/sr;
@@ -266,9 +266,12 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
  const float staticTrim=d(-driveDb*.20f);
  const float autoTrim=juce::jlimit(.25f,4.f,rmsIn/juce::jmax(.0001f,rmsOut));
  const float trim=comp==0?1.f:(comp==1?staticTrim:autoTrim);
+ const int totalDryDelay=juce::jlimit(0,dryDelayLength-1,
+    (int)std::round(oversamplers[(size_t)osIndex]->getLatencyInSamples())+
+    (transportOn?(int)std::round(delayBase):0));
  for(int c=0;c<channels;++c){auto* dst=buffer.getWritePointer(c);const auto* wet=scratch.getReadPointer(c);for(int i=0;i<count;++i){
   const float dryInput=dst[i]*in;
-  const int dryLatency=juce::jlimit(0,dryDelayLength-1,(int)std::round(oversamplers[(size_t)osIndex]->getLatencyInSamples()));
+  const int dryLatency=totalDryDelay;
   auto& ring=dryDelay[(size_t)c];
   const int read=(dryWrite+i+dryDelayLength-dryLatency)%dryDelayLength;
   const float dry=dryLatency==0?dryInput:ring[(size_t)read];
@@ -286,7 +289,10 @@ void SaturatorProcessor::processBlock(juce::AudioBuffer<float>& buffer,juce::Mid
  if(n==0||channels==0)return;
  for(int c=channels;c<buffer.getNumChannels();++c)buffer.clear(c,0,n);
  const int idx=juce::jlimit(0,3,(int)*parameters.getRawParameterValue("oversampling"));
- const int latency=(int)std::round(oversamplers[(size_t)idx]->getLatencyInSamples());
+ const int tapeMode=(int)*parameters.getRawParameterValue("tape");
+ const bool transport= tapeMode>0 && (*parameters.getRawParameterValue("wowFlutterOn")>.5f || tapeMode>=5);
+ const int latency=(int)std::round(oversamplers[(size_t)idx]->getLatencyInSamples())+
+   (transport?(int)std::round(sr*.025):0);
  if(getLatencySamples()!=latency)setLatencySamples(latency);
  for(int pos=0;pos<n;pos+=maxBlock){
   const int count=juce::jmin(maxBlock,n-pos);

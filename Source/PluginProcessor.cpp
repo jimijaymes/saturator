@@ -43,9 +43,13 @@ void SaturatorProcessor::prepareToPlay(double sampleRate,int block){
  tapeDelayLength=juce::jmax(512,(int)std::ceil(sr*.08));
  for(auto& line:tapeDelay)line.assign((size_t)tapeDelayLength,0.f);
  tapeWrite=0;transportTime=0;
+ dryDelayLength=512;
+ for(auto& line:dryDelay)line.assign((size_t)dryDelayLength,0.f);
+ dryWrite=0;
  for(int i=0;i<4;++i){
   oversamplers[(size_t)i]=std::make_unique<juce::dsp::Oversampling<float>>(2,(size_t)i,juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,true,false);
   oversamplers[(size_t)i]->initProcessing((size_t)maxBlock);
+  oversamplers[(size_t)i]->reset();
  }
  setLatencySamples(0);
 }
@@ -54,19 +58,19 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
  if(which==0){
   // Complete equipment-stage voicings: transformer, drive amplifier and loading.
   // Magnetic parameters are deliberately estimated; these are not measured clones.
-  int model=juce::jlimit(0,7,(int)*parameters.getRawParameterValue("transformer"));if(model==0)return x;
+  int model=cachedModels[0];if(model==0)return x;
   const float hp[]={0,22,12,24,9,28,14,18};
   const float lp[]={0,19000,17500,21000,22000,15500,18500,19500};
   const float asym[]={0,.035f,.085f,.075f,.045f,.02f,.095f,.045f};
   const float magnetDrive[]={0,.65f,1.1f,.8f,1.3f,.7f,1.35f,1.0f};
   const float amplifierDrive[]={0,.25f,.9f,.8f,1.1f,.2f,1.0f,1.15f};
-  const float lowPole=p(hp[model],rate),highPole=p(lp[model],rate);
+  const float lowPole=cachedCoefficients[0],highPole=cachedCoefficients[1];
   s.coreLow=lowPole*s.coreLow+(1-lowPole)*x;
   s.coreHigh=highPole*s.coreHigh+(1-highPole)*x;
   const float ac=x-s.coreLow;
   // Core flux is driven by a leaky integral of voltage; low frequencies
   // generate greater flux for equal signal voltage, unlike static waveshaping.
-  const float leak=p(hp[model]*.55f,rate);
+  const float leak=cachedCoefficients[2];
   s.flux=leak*s.flux+(1-leak)*ac*(140.f/juce::jmax(10.f,hp[model]));
   const float core=std::tanh(s.flux*magnetDrive[model]*drive*.22f+bias*.12f);
   const float coreDist=(core-s.flux*magnetDrive[model]*drive*.22f)*(.04f+.15f*character);
@@ -81,13 +85,13 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
   return y-topLoss;
  }
  if(which==1){
-  int model=juce::jlimit(0,4,(int)*parameters.getRawParameterValue("tape"));if(model==0)return x;
+  int model=cachedModels[1];if(model==0)return x;
   // Record amp -> biased magnetic storage -> reproduce EQ/head response.
   // Figures are model estimates; nominal bandwidth targets come from manuals.
   const float head[]={0,32,48,25,36},top[]={0,17500,20500,21500,14500};
   const float density[]={0,.9f,.75f,.65f,1.18f};
   const float soft[]={0,.24f,.18f,.13f,.32f};
-  const float pole=p(top[model],rate),bass=p(head[model],rate);
+  const float pole=cachedCoefficients[3],bass=cachedCoefficients[4];
   s.tapeLow=bass*s.tapeLow+(1-bass)*x;
   s.tapeHigh=pole*s.tapeHigh+(1-pole)*x;
   const float transient=x-s.tapePrev;s.tapePrev=x;
@@ -96,16 +100,16 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
   const float record=x-hfLoss+.04f*character*s.tapeLow;
   const float magneticInput=record*drive*density[model];
   const float equilibrium=std::tanh(magneticInput+bias*.22f);
-  const float inertia=p(model==4?500.f:2100.f,rate);
+  const float inertia=cachedCoefficients[5];
   s.magnet=inertia*s.magnet+(1-inertia)*equilibrium;
   const float tapeOutput=(.8f*equilibrium+.2f*s.magnet-std::tanh(bias*.22f))/juce::jmax(.1f,drive*density[model]);
   // Head contour is deliberately subtle on the well-aligned A80.
   const float headBump=(model==4?.10f:.045f)*character*s.tapeLow;
   return (1-soft[model]*.4f)*tapeOutput+soft[model]*.4f*x+headBump;
  }
- int model=(int)*parameters.getRawParameterValue("circuit");if(model==0)return x;
+ int model=cachedModels[2];if(model==0)return x;
  const float capHz[]={0,18,32,8,25,45};
- float capPole=p(capHz[model],rate);
+ float capPole=cachedCoefficients[6];
  s.circuitCap=capPole*s.circuitCap+(1-capPole)*x;
  float signal=(x-s.circuitCap)*drive;
  float y=signal;
@@ -128,7 +132,7 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
   case 4: y=sat(signal*.8f+.28f+bias*.25f)-sat(.28f+bias*.25f);break;
   case 5: y=sat(signal*1.35f+.45f+bias*.3f)-sat(.45f+bias*.3f);break;
  }
- float top=p(model==3?18500.f:12000.f,rate);
+ float top=cachedCoefficients[7];
  s.circuitBias=top*s.circuitBias+(1-top)*y;
  return (y-.09f*character*(y-s.circuitBias))/juce::jmax(.1f,drive);
 }
@@ -159,13 +163,40 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
  juce::dsp::AudioBlock<const float> constInput(inputBlock);
  auto up=os.processSamplesUp(constInput);
  const float rate=(float)sr*(float)os.getOversamplingFactor();
+ cachedModels[0]=juce::jlimit(0,7,(int)*parameters.getRawParameterValue("transformer"));
+ cachedModels[1]=juce::jlimit(0,4,(int)*parameters.getRawParameterValue("tape"));
+ cachedModels[2]=juce::jlimit(0,5,(int)*parameters.getRawParameterValue("circuit"));
+ const float xfHP[]={0,22,12,24,9,28,14,18};
+ const float xfLP[]={0,19000,17500,21000,22000,15500,18500,19500};
+ const float tapeHP[]={0,32,48,25,36},tapeLP[]={0,17500,20500,21500,14500};
+ const float capHP[]={0,18,32,8,25,45};
+ cachedCoefficients[0]=p(xfHP[cachedModels[0]],rate);
+ cachedCoefficients[1]=p(xfLP[cachedModels[0]],rate);
+ cachedCoefficients[2]=p(xfHP[cachedModels[0]]*.55f,rate);
+ cachedCoefficients[3]=p(tapeLP[cachedModels[1]],rate);
+ cachedCoefficients[4]=p(tapeHP[cachedModels[1]],rate);
+ cachedCoefficients[5]=p(cachedModels[1]==4?500.f:2100.f,rate);
+ cachedCoefficients[6]=p(capHP[cachedModels[2]],rate);
+ cachedCoefficients[7]=p(cachedModels[2]==3?18500.f:12000.f,rate);
+ cachedCoefficients[8]=p(preHP,rate);
+ cachedCoefficients[9]=p(preLP,rate);
+ cachedCoefficients[10]=p(postHP,rate);
+ cachedCoefficients[11]=p(postLP,rate);
  for(int c=0;c<channels;++c){
   auto* data=up.getChannelPointer((size_t)c);
   for(size_t i=0;i<up.getNumSamples();++i){
    float x=data[i];
-   if(preOn)x=states[(size_t)c].pre.process(x,preHP,preLP,rate);
+   if(preOn){auto& f=states[(size_t)c].pre;
+    f.hp=cachedCoefficients[8]*f.hp+(1-cachedCoefficients[8])*x;
+    const float high=x-f.hp;
+    f.lp=cachedCoefficients[9]*f.lp+(1-cachedCoefficients[9])*high;
+    x=f.lp;}
    for(int st=0;st<3;++st){const int type=orders[order][st];x=stage(x,c,type,stageDrive[type],character,bias,rate);}
-   if(postOn)x=states[(size_t)c].post.process(x,postHP,postLP,rate);
+   if(postOn){auto& f=states[(size_t)c].post;
+    f.hp=cachedCoefficients[10]*f.hp+(1-cachedCoefficients[10])*x;
+    const float high=x-f.hp;
+    f.lp=cachedCoefficients[11]*f.lp+(1-cachedCoefficients[11])*high;
+    x=f.lp;}
    data[i]=x;
   }
  }
@@ -173,14 +204,14 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
  for(int c=0;c<channels;++c){auto* wet=scratch.getReadPointer(c);for(int i=0;i<count;++i)outputEnergy+=wet[i]*wet[i];}
  // Model-specific tape transport. The published weighted wow/flutter figures
  // are NOT equivalent to sinusoidal peak modulation; depths are estimates.
- const int tapeModel=juce::jlimit(0,4,(int)*parameters.getRawParameterValue("tape"));
+ const int tapeModel=cachedModels[1];
  const bool transportOn=*parameters.getRawParameterValue("wowFlutterOn")>.5f && tapeModel>0;
  const float wowHz[]={0,.48f,.55f,.62f,.42f};
  const float flutterHz[]={0,8.2f,9.5f,12.3f,6.4f};
  const float wowPct[]={0,.00012f,.00010f,.00017f,.00034f};
  const float flutterPct[]={0,.00009f,.00008f,.00011f,.00024f};
  const float delayBase=(float)(sr*.025);
- for(int i=0;i<count;++i){
+ if(transportOn)for(int i=0;i<count;++i){
   const double t=transportTime;transportTime+=1.0/sr;
   const float wow=std::sin((float)(juce::MathConstants<double>::twoPi*wowHz[tapeModel]*t));
   const float drift=std::sin((float)(juce::MathConstants<double>::twoPi*.13*t+1.1));
@@ -200,7 +231,7 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
    auto& line=tapeDelay[(size_t)c];
    const float x=scratch.getSample(c,i);
    line[(size_t)tapeWrite]=x;
-   if(transportOn)scratch.setSample(c,i,line[(size_t)index0]*(1-frac)+line[(size_t)index1]*frac);
+   scratch.setSample(c,i,line[(size_t)index0]*(1-frac)+line[(size_t)index1]*frac);
   }
   tapeWrite=(tapeWrite+1)%tapeDelayLength;
  }
@@ -210,10 +241,16 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
  const float autoTrim=juce::jlimit(.25f,4.f,rmsIn/juce::jmax(.0001f,rmsOut));
  const float trim=comp==0?1.f:(comp==1?staticTrim:autoTrim);
  for(int c=0;c<channels;++c){auto* dst=buffer.getWritePointer(c);const auto* wet=scratch.getReadPointer(c);for(int i=0;i<count;++i){
-  float dry=dst[i]*in;
+  const float dryInput=dst[i]*in;
+  const int dryLatency=juce::jlimit(0,dryDelayLength-1,(int)std::round(oversamplers[(size_t)osIndex]->getLatencyInSamples()));
+  auto& ring=dryDelay[(size_t)c];
+  const int read=(dryWrite+i+dryDelayLength-dryLatency)%dryDelayLength;
+  const float dry=dryLatency==0?dryInput:ring[(size_t)read];
+  ring[(size_t)((dryWrite+i)%dryDelayLength)]=dryInput;
   float y=(dry*(1-mix)+wet[i]*trim*mix)*out;
   dst[i]=y;outputPeak=juce::jmax(outputPeak,std::abs(y));
  }}
+ dryWrite=(dryWrite+count)%dryDelayLength;
  inputMeter.store(meter(inputPeak));outputMeter.store(meter(outputPeak));
  gainReduction.store(juce::Decibels::gainToDecibels(juce::jmax(.0001f,trim),-100.f));
 }

@@ -23,8 +23,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SaturatorProcessor::layout()
  add("preHP","Pre HP Hz",10,1500,20,.4f);add("preLP","Pre LP Hz",1000,20000,20000,.5f);
  add("postHP","Post HP Hz",10,1500,20,.4f);add("postLP","Post LP Hz",1000,20000,20000,.5f);
  add("character","Character %",0,100,50);add("bias","Bias %",-100,100,0);
- v.add(std::make_unique<C>(juce::ParameterID{"transformer",1},"Transformer",juce::StringArray{"Off","American Iron","British Console","Tube Output","Vintage Limiter"},1));
- v.add(std::make_unique<C>(juce::ParameterID{"tape",1},"Tape",juce::StringArray{"Off","15 IPS Studio","30 IPS Studio","Cassette Ferric","Vintage Tube Deck"},1));
+ v.add(std::make_unique<C>(juce::ParameterID{"transformer",1},"Transformer",juce::StringArray{"Off","Neve 10468 Input","Neve LO1166 Output","API 2622 + 2520","API 2520 + 2503","1176 UTC Input","1176 Class A Output","1176 Rev F Output"},1));
+ v.add(std::make_unique<C>(juce::ParameterID{"tape",1},"Tape",juce::StringArray{"Off","Studer A80 15 IPS","Studer A80 30 IPS","Nakamichi Dragon Metal","Vintage Valve Deck"},1));
  v.add(std::make_unique<C>(juce::ParameterID{"circuit",1},"Circuit",juce::StringArray{"Off","Discrete Class A","Class AB","Op-Amp","Triode Tube","Pentode Tube"},1));
  v.add(std::make_unique<C>(juce::ParameterID{"order",1},"Stage Order",juce::StringArray{"Transformer > Tape > Circuit","Transformer > Circuit > Tape","Tape > Transformer > Circuit","Tape > Circuit > Transformer","Circuit > Transformer > Tape","Circuit > Tape > Transformer"},0));
  v.add(std::make_unique<C>(juce::ParameterID{"oversampling",1},"Oversampling",juce::StringArray{"1x","2x","4x","8x"},2));
@@ -45,31 +45,56 @@ void SaturatorProcessor::prepareToPlay(double sampleRate,int block){
 float SaturatorProcessor::stage(float x,int channel,int which,float drive,float character,float bias,float rate){
  auto& s=states[(size_t)channel];
  if(which==0){
-  int model=(int)*parameters.getRawParameterValue("transformer");if(model==0)return x;
-  const float lows[]={0,65,90,45,55}, highs[]={0,16000,13500,18000,11000};
-  const float asym[]={0,.035f,.065f,.025f,.085f};
-  s.coreLow=p(lows[model],rate)*s.coreLow+(1-p(lows[model],rate))*x;
-  s.coreHigh=p(highs[model],rate)*s.coreHigh+(1-p(highs[model],rate))*x;
-  const float fluxInput=s.coreLow*(.35f+character*1.6f);
-  s.flux=.998f*s.flux+.002f*sat(fluxInput*2.f);
-  float nonlinear=sat(x*drive+asym[model]*character+s.flux*.14f)-sat(asym[model]*character+s.flux*.14f);
-  nonlinear/=juce::jmax(.1f,drive);
-  const float lowSag=s.coreLow-sat(s.coreLow*(1.f+character*2.f))/(1.f+character*2.f);
-  return nonlinear-.13f*character*lowSag+.08f*character*(s.coreHigh-x);
+  // Complete equipment-stage voicings: transformer, drive amplifier and loading.
+  // Magnetic parameters are deliberately estimated; these are not measured clones.
+  int model=juce::jlimit(0,7,(int)*parameters.getRawParameterValue("transformer"));if(model==0)return x;
+  const float hp[]={0,22,12,24,9,28,14,18};
+  const float lp[]={0,19000,17500,21000,22000,15500,18500,19500};
+  const float asym[]={0,.035f,.085f,.075f,.045f,.02f,.095f,.045f};
+  const float magnetDrive[]={0,.65f,1.1f,.8f,1.3f,.7f,1.35f,1.0f};
+  const float amplifierDrive[]={0,.25f,.9f,.8f,1.1f,.2f,1.0f,1.15f};
+  const float lowPole=p(hp[model],rate),highPole=p(lp[model],rate);
+  s.coreLow=lowPole*s.coreLow+(1-lowPole)*x;
+  s.coreHigh=highPole*s.coreHigh+(1-highPole)*x;
+  const float ac=x-s.coreLow;
+  // Core flux is driven by a leaky integral of voltage; low frequencies
+  // generate greater flux for equal signal voltage, unlike static waveshaping.
+  const float leak=p(hp[model]*.55f,rate);
+  s.flux=leak*s.flux+(1-leak)*ac*(140.f/juce::jmax(10.f,hp[model]));
+  const float core=std::tanh(s.flux*magnetDrive[model]*drive*.22f+bias*.12f);
+  const float coreDist=(core-s.flux*magnetDrive[model]*drive*.22f)*(.04f+.15f*character);
+  const float amp=x*drive*(.65f+amplifierDrive[model]*character);
+  float ampY=std::tanh(amp+asym[model]+bias*.1f)-std::tanh(asym[model]+bias*.1f);
+  ampY/=juce::jmax(.1f,drive*(.65f+amplifierDrive[model]*character));
+  // Blend a predominantly clean signal with amplifier compression and
+  // the nonlinear magnetic branch; load response changes with model.
+  const float ampBlend=.14f+.36f*character;
+  float y=(1-ampBlend)*x+ampBlend*ampY+coreDist;
+  const float topLoss=(x-s.coreHigh)*(.015f+.065f*character);
+  return y-topLoss;
  }
  if(which==1){
-  int model=(int)*parameters.getRawParameterValue("tape");if(model==0)return x;
-  const float head[]={0,65,42,110,80},top[]={0,16500,19500,10500,12500};
+  int model=juce::jlimit(0,4,(int)*parameters.getRawParameterValue("tape"));if(model==0)return x;
+  // Record amp -> biased magnetic storage -> reproduce EQ/head response.
+  // Figures are model estimates; nominal bandwidth targets come from manuals.
+  const float head[]={0,32,48,25,65},top[]={0,17500,20500,21500,11800};
+  const float density[]={0,.9f,.75f,.65f,1.45f};
+  const float soft[]={0,.24f,.18f,.13f,.4f};
   const float pole=p(top[model],rate),bass=p(head[model],rate);
   s.tapeLow=bass*s.tapeLow+(1-bass)*x;
   s.tapeHigh=pole*s.tapeHigh+(1-pole)*x;
-  float slew=x-s.tapePrev;s.tapePrev=x;
-  float magneticInput=(x+.12f*character*s.tapeLow+.08f*character*slew)*drive;
-  const float equilibrium=sat(magneticInput+bias*.3f);
-  float inertia=p(1300.f+3000.f*(1-character),rate);
+  const float transient=x-s.tapePrev;s.tapePrev=x;
+  // HF self-erasure increases with level, especially at slower tape speeds.
+  const float hfLoss=(x-s.tapeHigh)*(.03f+soft[model]*character*juce::jmin(1.f,std::abs(x*drive)));
+  const float record=x-hfLoss+.04f*character*s.tapeLow;
+  const float magneticInput=record*drive*density[model];
+  const float equilibrium=std::tanh(magneticInput+bias*.22f);
+  const float inertia=p(model==4?500.f:2100.f,rate);
   s.magnet=inertia*s.magnet+(1-inertia)*equilibrium;
-  float y=(.72f*equilibrium+.28f*s.magnet-sat(bias*.3f))/juce::jmax(.1f,drive);
-  return y+.16f*character*s.tapeLow-.12f*character*(x-s.tapeHigh);
+  const float tapeOutput=(.8f*equilibrium+.2f*s.magnet-std::tanh(bias*.22f))/juce::jmax(.1f,drive*density[model]);
+  // Head contour is deliberately subtle on the well-aligned A80.
+  const float headBump=(model==4?.18f:.045f)*character*s.tapeLow;
+  return (1-soft[model]*.4f)*tapeOutput+soft[model]*.4f*x+headBump;
  }
  int model=(int)*parameters.getRawParameterValue("circuit");if(model==0)return x;
  const float capHz[]={0,18,32,8,25,45};

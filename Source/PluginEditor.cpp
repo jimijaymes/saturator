@@ -7,8 +7,8 @@ SaturatorEditor::SaturatorEditor(SaturatorProcessor& p):AudioProcessorEditor(p),
  const char* cids[]={"transformer","tape","circuit","order","oversampling","compensation"};
  const char* clabels[]={"TRANSFORMER MODEL","TAPE MODEL","CIRCUIT TOPOLOGY","SIGNAL CHAIN ORDER","OVERSAMPLING","GAIN COMPENSATION"};
  const juce::StringArray options[]={
-  {"Off","American Iron","British Console","Tube Output","Vintage Limiter"},
-  {"Off","15 IPS Studio","30 IPS Studio","Cassette Ferric","Vintage Tube Deck"},
+  {"Off","Neve 10468 Input","Neve LO1166 Output","API 2622 + 2520","API 2520 + 2503","1176 UTC Input","1176 Class A Output","1176 Rev F Output"},
+  {"Off","Studer A80 15 IPS","Studer A80 30 IPS","Nakamichi Dragon Metal","Vintage Valve Deck"},
   {"Off","Discrete Class A","Class AB","Op-Amp","Triode Tube","Pentode Tube"},
   {"Transformer > Tape > Circuit","Transformer > Circuit > Tape","Tape > Transformer > Circuit","Tape > Circuit > Transformer","Circuit > Transformer > Tape","Circuit > Tape > Transformer"},
   {"1x","2x","4x","8x"},{"Off","Static","RMS Auto"}};
@@ -22,7 +22,7 @@ SaturatorEditor::SaturatorEditor(SaturatorProcessor& p):AudioProcessorEditor(p),
 void SaturatorEditor::timerCallback(){inDb=processor.inputMeter.load();outDb=processor.outputMeter.load();trimDb=processor.gainReduction.load();repaint(juce::Rectangle<int>(730,20,245,125));}
 void SaturatorEditor::paint(juce::Graphics& g){
  g.fillAll(bg);g.setColour(panel);g.fillRoundedRectangle(getLocalBounds().toFloat().reduced(12),12);g.setColour(amber);g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(12),12,2);
- g.setColour(cream);g.setFont(juce::Font(juce::FontOptions(31,juce::Font::bold)));g.drawText("SATURATOR   0.1",30,24,560,50,juce::Justification::centredLeft);
+ g.setColour(cream);g.setFont(juce::Font(juce::FontOptions(31,juce::Font::bold)));g.drawText("SATURATOR   0.2",30,24,560,50,juce::Justification::centredLeft);
  g.setFont(juce::Font(juce::FontOptions(12)));g.drawText("TRANSFORMER  /  TAPE  /  ANALOG CIRCUIT",32,76,600,24,juce::Justification::centredLeft);
  g.setColour(amber);g.drawLine(30,112,970,112,2);
  g.setColour(cream);g.setFont(juce::Font(juce::FontOptions(12)));

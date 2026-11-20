@@ -31,6 +31,10 @@ private:
  struct State {Filter pre,post;float flux=0,magnet=0,tapePrev=0,tapeLow=0,tapeHigh=0,coreLow=0,coreHigh=0,circuitCap=0,circuitBias=0;};
  std::array<State,2> states{};
  std::array<std::vector<float>,2> tapeDelay;
+ std::array<std::vector<float>,2> dryDelay;
+ int dryWrite=0, dryDelayLength=0;
+ int cachedModels[3]{1,1,1};
+ float cachedCoefficients[12]{};
  int tapeDelayLength=0,tapeWrite=0;
  double transportTime=0.0;
  std::array<std::unique_ptr<juce::dsp::Oversampling<float>>,4> oversamplers;

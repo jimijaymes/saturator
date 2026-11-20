@@ -89,34 +89,47 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
   // Record amp -> biased magnetic storage -> reproduce EQ/head response.
   // Figures are model estimates; nominal bandwidth targets come from manuals.
   const float head[]={0,32,48,25,36},top[]={0,17500,20500,21500,14500};
-  const float density[]={0,.9f,.75f,.65f,1.18f};
-  const float soft[]={0,.24f,.18f,.13f,.32f};
-  const float pole=cachedCoefficients[3],bass=cachedCoefficients[4];
-  s.tapeLow=bass*s.tapeLow+(1-bass)*x;
-  s.tapeHigh=pole*s.tapeHigh+(1-pole)*x;
-  const float transient=x-s.tapePrev;s.tapePrev=x;
-  // HF self-erasure increases with level, especially at slower tape speeds.
-  const float hfLoss=(x-s.tapeHigh)*(.03f+soft[model]*character*juce::jmin(1.f,std::abs(x*drive)));
-  const float record=x-hfLoss+.04f*character*s.tapeLow;
-  // Calibrated nominal tape headroom: the tape stage should not hit
-  // magnetic saturation as early as the preamp/circuit stages.
-  // The independent Tape Drive control still allows deliberate overload.
-  constexpr float nominalTapeHeadroom=0.25f; // ~12 dB additional headroom
+  // Approximate a correctly AC-biased record path: near-linear below
+  // magnetic operating level, then a relatively narrow saturation knee.
+  // These model-specific values are voicings, not measured calibrations.
+  const float density[]={0,.90f,.75f,.65f,1.18f};
+  const float knee[]={0,.82f,.88f,.74f,.68f};
+  const float ceiling[]={0,1.20f,1.24f,1.15f,1.12f};
+  const float hfSensitivity[]={0,.20f,.13f,.28f,.34f};
+  const float lowPole=cachedCoefficients[4],highPole=cachedCoefficients[3];
+  s.tapeLow=lowPole*s.tapeLow+(1-lowPole)*x;
+  s.tapeHigh=highPole*s.tapeHigh+(1-highPole)*x;
+  const float hf=x-s.tapeHigh;
+  // Frequency-dependent high-level HF compression (self-erasure proxy).
+  // Envelope tracks high-frequency programme energy, not broadband drive.
+  const float hfLevel=std::abs(hf);
+  const float hfAttack=p(900.f,rate),hfRelease=p(85.f,rate);
+  const float hfCoeff=hfLevel>s.tapeHFEnv?hfAttack:hfRelease;
+  s.tapeHFEnv=hfCoeff*s.tapeHFEnv+(1-hfCoeff)*hfLevel;
+  constexpr float nominalTapeHeadroom=.25f; // ~12 dB nominal calibration shift
   const float magneticDrive=juce::jmax(.001f,drive*density[model]*nominalTapeHeadroom);
-  const float magneticBias=bias*.22f;
-  const float magneticInput=record*magneticDrive;
-  const float equilibrium=std::tanh(magneticInput+magneticBias);
+  const float hfOverload=juce::jmax(0.f,magneticDrive*s.tapeHFEnv-.55f);
+  const float hfGain=1.f/(1.f+hfSensitivity[model]*hfOverload);
+  const float record=x-hf*(1.f-hfGain)+.025f*character*s.tapeLow;
+  const float magneticBias=bias*.12f;
+  const float field=record*magneticDrive+magneticBias;
+  // C1-continuous magnetic saturation: slope is exactly 1 below the
+  // knee and remains continuous when approaching the saturation ceiling.
+  // Unlike tanh this doesn't compress significantly below operating level.
+  const auto magnetise=[&](float v){
+   const float magnitude=std::abs(v);
+   if(magnitude<=knee[model])return v;
+   const float range=ceiling[model]-knee[model];
+   const float saturated=ceiling[model]-range*std::exp(-(magnitude-knee[model])/range);
+   return std::copysign(saturated,v);
+  };
+  const float equilibrium=magnetise(field);
   const float inertia=cachedCoefficients[5];
-  s.magnet=inertia*s.magnet+(1-inertia)*equilibrium;
-  // Normalise against the small-signal slope, not only the input gain.
-  // This prevents the tape stage losing level simply because bias is added.
-  const float biasResponse=std::tanh(magneticBias);
-  const float smallSignalSlope=juce::jmax(.1f,1.f-biasResponse*biasResponse);
-  const float tapeOutput=(.8f*equilibrium+.2f*s.magnet-biasResponse)/
-       (magneticDrive*smallSignalSlope);
-  // The recorded signal is entirely subject to magnetic saturation:
-  // no artificial parallel clean path to soften the saturation knee.
-  // Headroom is set by the calibrated record level above.
+  s.magnet=inertia*s.magnet+(1.f-inertia)*equilibrium;
+  // Magnetic history is deliberately modest: this is not a full
+  // Jiles-Atherton hysteresis solver or explicit ultrasonic AC-bias model.
+  const float magneticOutput=.94f*equilibrium+.06f*s.magnet;
+  const float tapeOutput=(magneticOutput-magnetise(magneticBias))/magneticDrive;
   const float headBump=(model==4?.10f:.045f)*character*s.tapeLow;
   return tapeOutput+headBump;
  }

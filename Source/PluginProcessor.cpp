@@ -45,13 +45,19 @@ void SaturatorProcessor::prepareToPlay(double sampleRate,int block){
  tapeWrite=0;transportTime=0;
  dryDelayLength=juce::jmax(1024,(int)std::ceil(sr*.12));
  for(auto& line:dryDelay)line.assign((size_t)dryDelayLength,0.f);
+ for(auto& line:wetDelay)line.assign((size_t)dryDelayLength,0.f);
  dryWrite=0;
  for(int i=0;i<4;++i){
   oversamplers[(size_t)i]=std::make_unique<juce::dsp::Oversampling<float>>(2,(size_t)i,juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,true,false);
   oversamplers[(size_t)i]->initProcessing((size_t)maxBlock);
   oversamplers[(size_t)i]->reset();
  }
- setLatencySamples(0);
+ maxOversamplingLatency=0;
+ for(const auto& os:oversamplers)
+  maxOversamplingLatency=juce::jmax(maxOversamplingLatency,(int)std::ceil(os->getLatencyInSamples()));
+ transportLatency=(int)std::round(sr*.025);
+ fixedLatency=maxOversamplingLatency+transportLatency;
+ setLatencySamples(fixedLatency);
 }
 float SaturatorProcessor::stage(float x,int channel,int which,float drive,float character,float bias,float rate){
  auto& s=states[(size_t)channel];
@@ -266,9 +272,10 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
  const float staticTrim=d(-driveDb*.20f);
  const float autoTrim=juce::jlimit(.25f,4.f,rmsIn/juce::jmax(.0001f,rmsOut));
  const float trim=comp==0?1.f:(comp==1?staticTrim:autoTrim);
- const int totalDryDelay=juce::jlimit(0,dryDelayLength-1,
-    (int)std::round(oversamplers[(size_t)osIndex]->getLatencyInSamples())+
-    (transportOn?(int)std::round(delayBase):0));
+ const int wetPadding=juce::jlimit(0,dryDelayLength-1,
+    fixedLatency-(int)std::round(oversamplers[(size_t)osIndex]->getLatencyInSamples())-
+    (transportOn?transportLatency:0));
+ const int totalDryDelay=fixedLatency;
  for(int c=0;c<channels;++c){auto* dst=buffer.getWritePointer(c);const auto* wet=scratch.getReadPointer(c);for(int i=0;i<count;++i){
   const float dryInput=dst[i]*in;
   const int dryLatency=totalDryDelay;
@@ -276,7 +283,11 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
   const int read=(dryWrite+i+dryDelayLength-dryLatency)%dryDelayLength;
   const float dry=dryLatency==0?dryInput:ring[(size_t)read];
   ring[(size_t)((dryWrite+i)%dryDelayLength)]=dryInput;
-  float y=(dry*(1-mix)+wet[i]*trim*mix)*out;
+  auto& wetRing=wetDelay[(size_t)c];
+  const int wetRead=(dryWrite+i+dryDelayLength-wetPadding)%dryDelayLength;
+  const float alignedWet=wetPadding==0?wet[i]:wetRing[(size_t)wetRead];
+  wetRing[(size_t)((dryWrite+i)%dryDelayLength)]=wet[i];
+  float y=(dry*(1-mix)+alignedWet*trim*mix)*out;
   dst[i]=y;outputPeak=juce::jmax(outputPeak,std::abs(y));
  }}
  dryWrite=(dryWrite+count)%dryDelayLength;
@@ -289,11 +300,8 @@ void SaturatorProcessor::processBlock(juce::AudioBuffer<float>& buffer,juce::Mid
  if(n==0||channels==0)return;
  for(int c=channels;c<buffer.getNumChannels();++c)buffer.clear(c,0,n);
  const int idx=juce::jlimit(0,3,(int)*parameters.getRawParameterValue("oversampling"));
- const int tapeMode=(int)*parameters.getRawParameterValue("tape");
- const bool transport= tapeMode>0 && (*parameters.getRawParameterValue("wowFlutterOn")>.5f || tapeMode>=5);
- const int latency=(int)std::round(oversamplers[(size_t)idx]->getLatencyInSamples())+
-   (transport?(int)std::round(sr*.025):0);
- if(getLatencySamples()!=latency)setLatencySamples(latency);
+ // Host PDC is fixed in prepareToPlay; never notify the host from audio thread.
+ // Wet signal is padded to this fixed latency in processChunk().
  for(int pos=0;pos<n;pos+=maxBlock){
   const int count=juce::jmin(maxBlock,n-pos);
   float* ptrs[2]={buffer.getWritePointer(0,pos),channels>1?buffer.getWritePointer(1,pos):nullptr};

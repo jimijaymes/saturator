@@ -24,18 +24,22 @@ juce::AudioProcessorValueTreeState::ParameterLayout SaturatorProcessor::layout()
  add("postHP","Post HP Hz",10,1500,20,.4f);add("postLP","Post LP Hz",1000,20000,20000,.5f);
  add("character","Character %",0,100,50);add("bias","Bias %",-100,100,0);
  v.add(std::make_unique<C>(juce::ParameterID{"transformer",1},"Transformer",juce::StringArray{"Off","Neve 10468 Input","Neve LO1166 Output","API 2622 + 2520","API 2520 + 2503","1176 UTC Input","1176 Class A Output","1176 Rev F Output"},1));
- v.add(std::make_unique<C>(juce::ParameterID{"tape",1},"Tape",juce::StringArray{"Off","Studer A80 15 IPS","Studer A80 30 IPS","Nakamichi Dragon Metal","Vintage Valve Deck"},1));
+ v.add(std::make_unique<C>(juce::ParameterID{"tape",1},"Tape",juce::StringArray{"Off","Studer A80 15 IPS","Studer A80 30 IPS","Nakamichi Dragon Metal","Studer J37 Abbey Road 15 IPS"},1));
  v.add(std::make_unique<C>(juce::ParameterID{"circuit",1},"Circuit",juce::StringArray{"Off","Discrete Class A","Class AB","Op-Amp","Triode Tube","Pentode Tube"},1));
  v.add(std::make_unique<C>(juce::ParameterID{"order",1},"Stage Order",juce::StringArray{"Transformer > Tape > Circuit","Transformer > Circuit > Tape","Tape > Transformer > Circuit","Tape > Circuit > Transformer","Circuit > Transformer > Tape","Circuit > Tape > Transformer"},0));
  v.add(std::make_unique<C>(juce::ParameterID{"oversampling",1},"Oversampling",juce::StringArray{"1x","2x","4x","8x"},2));
  v.add(std::make_unique<C>(juce::ParameterID{"compensation",1},"Gain Compensation",juce::StringArray{"Off","Static","RMS Auto"},1));
  v.add(std::make_unique<B>(juce::ParameterID{"preOn",1},"Pre Filter",true));
  v.add(std::make_unique<B>(juce::ParameterID{"postOn",1},"Post Filter",true));
+ v.add(std::make_unique<B>(juce::ParameterID{"wowFlutterOn",1},"Tape Wow and Flutter",false));
  return v;
 }
 SaturatorProcessor::SaturatorProcessor():AudioProcessor(BusesProperties().withInput("Input",juce::AudioChannelSet::stereo(),true).withOutput("Output",juce::AudioChannelSet::stereo(),true)),parameters(*this,nullptr,"STATE",layout()){}
 void SaturatorProcessor::prepareToPlay(double sampleRate,int block){
  sr=sampleRate;maxBlock=juce::jmax(1,block);states={};scratch.setSize(2,maxBlock);
+ tapeDelayLength=juce::jmax(512,(int)std::ceil(sr*.08));
+ for(auto& line:tapeDelay)line.assign((size_t)tapeDelayLength,0.f);
+ tapeWrite=0;transportTime=0;
  for(int i=0;i<4;++i){
   oversamplers[(size_t)i]=std::make_unique<juce::dsp::Oversampling<float>>(2,(size_t)i,juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,true,false);
   oversamplers[(size_t)i]->initProcessing((size_t)maxBlock);
@@ -77,9 +81,9 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
   int model=juce::jlimit(0,4,(int)*parameters.getRawParameterValue("tape"));if(model==0)return x;
   // Record amp -> biased magnetic storage -> reproduce EQ/head response.
   // Figures are model estimates; nominal bandwidth targets come from manuals.
-  const float head[]={0,32,48,25,65},top[]={0,17500,20500,21500,11800};
-  const float density[]={0,.9f,.75f,.65f,1.45f};
-  const float soft[]={0,.24f,.18f,.13f,.4f};
+  const float head[]={0,32,48,25,36},top[]={0,17500,20500,21500,14500};
+  const float density[]={0,.9f,.75f,.65f,1.18f};
+  const float soft[]={0,.24f,.18f,.13f,.32f};
   const float pole=p(top[model],rate),bass=p(head[model],rate);
   s.tapeLow=bass*s.tapeLow+(1-bass)*x;
   s.tapeHigh=pole*s.tapeHigh+(1-pole)*x;
@@ -93,7 +97,7 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
   s.magnet=inertia*s.magnet+(1-inertia)*equilibrium;
   const float tapeOutput=(.8f*equilibrium+.2f*s.magnet-std::tanh(bias*.22f))/juce::jmax(.1f,drive*density[model]);
   // Head contour is deliberately subtle on the well-aligned A80.
-  const float headBump=(model==4?.18f:.045f)*character*s.tapeLow;
+  const float headBump=(model==4?.10f:.045f)*character*s.tapeLow;
   return (1-soft[model]*.4f)*tapeOutput+soft[model]*.4f*x+headBump;
  }
  int model=(int)*parameters.getRawParameterValue("circuit");if(model==0)return x;
@@ -149,6 +153,39 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
  }
  os.processSamplesDown(inputBlock);
  for(int c=0;c<channels;++c){auto* wet=scratch.getReadPointer(c);for(int i=0;i<count;++i)outputEnergy+=wet[i]*wet[i];}
+ // Model-specific tape transport. The published weighted wow/flutter figures
+ // are NOT equivalent to sinusoidal peak modulation; depths are estimates.
+ const int tapeModel=juce::jlimit(0,4,(int)*parameters.getRawParameterValue("tape"));
+ const bool transportOn=*parameters.getRawParameterValue("wowFlutterOn")>.5f && tapeModel>0;
+ const float wowHz[]={0,.48f,.55f,.62f,.42f};
+ const float flutterHz[]={0,8.2f,9.5f,12.3f,6.4f};
+ const float wowPct[]={0,.00012f,.00010f,.00017f,.00034f};
+ const float flutterPct[]={0,.00009f,.00008f,.00011f,.00024f};
+ const float delayBase=(float)(sr*.025);
+ for(int i=0;i<count;++i){
+  const double t=transportTime;transportTime+=1.0/sr;
+  const float wow=std::sin((float)(juce::MathConstants<double>::twoPi*wowHz[tapeModel]*t));
+  const float drift=std::sin((float)(juce::MathConstants<double>::twoPi*.13*t+1.1));
+  const float flutter=std::sin((float)(juce::MathConstants<double>::twoPi*flutterHz[tapeModel]*t))
+    +.3f*std::sin((float)(juce::MathConstants<double>::twoPi*flutterHz[tapeModel]*1.79*t));
+  const float wowSamples=(float)sr*wowPct[tapeModel]
+      *(wow/juce::jmax(.1f,juce::MathConstants<float>::twoPi*wowHz[tapeModel])
+       +.12f*drift/(juce::MathConstants<float>::twoPi*.13f));
+  const float flutterSamples=(float)sr*flutterPct[tapeModel]
+      *(flutter/(juce::MathConstants<float>::twoPi*flutterHz[tapeModel]));
+  const float readDelay=juce::jlimit(1.f,(float)tapeDelayLength-3.f,delayBase+wowSamples+flutterSamples);
+  const float readPos=(float)tapeWrite-readDelay;
+  const int index0=((int)std::floor(readPos)%tapeDelayLength+tapeDelayLength)%tapeDelayLength;
+  const int index1=(index0+1)%tapeDelayLength;
+  const float frac=readPos-std::floor(readPos);
+  for(int c=0;c<channels;++c){
+   auto& line=tapeDelay[(size_t)c];
+   const float x=scratch.getSample(c,i);
+   line[(size_t)tapeWrite]=x;
+   if(transportOn)scratch.setSample(c,i,line[(size_t)index0]*(1-frac)+line[(size_t)index1]*frac);
+  }
+  tapeWrite=(tapeWrite+1)%tapeDelayLength;
+ }
  const float rmsIn=std::sqrt(inputEnergy/juce::jmax(1,count*channels));
  const float rmsOut=std::sqrt(outputEnergy/juce::jmax(1,count*channels));
  const float staticTrim=d(-driveDb*.20f);

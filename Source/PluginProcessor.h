@@ -2,6 +2,7 @@
 #include <JuceHeader.h>
 #include <array>
 #include <atomic>
+#include <vector>
 class SaturatorProcessor final : public juce::AudioProcessor {
 public:
  SaturatorProcessor();
@@ -10,7 +11,7 @@ public:
  void processBlock(juce::AudioBuffer<float>&,juce::MidiBuffer&) override;
  juce::AudioProcessorEditor* createEditor() override;
  bool hasEditor() const override {return true;}
- const juce::String getName() const override {return "Saturator 0.2";}
+ const juce::String getName() const override {return "Saturator 0.3";}
  bool acceptsMidi() const override {return false;}
  bool producesMidi() const override {return false;}
  bool isMidiEffect() const override {return false;}
@@ -29,6 +30,9 @@ private:
  struct Filter {float lp=0,hp=0; float process(float x,float hpHz,float lpHz,float sr);};
  struct State {Filter pre,post;float flux=0,magnet=0,tapePrev=0,tapeLow=0,tapeHigh=0,coreLow=0,coreHigh=0,circuitCap=0,circuitBias=0;};
  std::array<State,2> states{};
+ std::array<std::vector<float>,2> tapeDelay;
+ int tapeDelayLength=0,tapeWrite=0;
+ double transportTime=0.0;
  std::array<std::unique_ptr<juce::dsp::Oversampling<float>>,4> oversamplers;
  juce::AudioBuffer<float> scratch;
  double sr=44100;

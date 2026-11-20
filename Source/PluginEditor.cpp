@@ -8,21 +8,23 @@ SaturatorEditor::SaturatorEditor(SaturatorProcessor& p):AudioProcessorEditor(p),
  const char* clabels[]={"TRANSFORMER MODEL","TAPE MODEL","CIRCUIT TOPOLOGY","SIGNAL CHAIN ORDER","OVERSAMPLING","GAIN COMPENSATION"};
  const juce::StringArray options[]={
   {"Off","Neve 10468 Input","Neve LO1166 Output","API 2622 + 2520","API 2520 + 2503","1176 UTC Input","1176 Class A Output","1176 Rev F Output"},
-  {"Off","Studer A80 15 IPS","Studer A80 30 IPS","Nakamichi Dragon Metal","Vintage Valve Deck"},
+  {"Off","Studer A80 15 IPS","Studer A80 30 IPS","Nakamichi Dragon Metal","Studer J37 Abbey Road 15 IPS"},
   {"Off","Discrete Class A","Class AB","Op-Amp","Triode Tube","Pentode Tube"},
   {"Transformer > Tape > Circuit","Transformer > Circuit > Tape","Tape > Transformer > Circuit","Tape > Circuit > Transformer","Circuit > Transformer > Tape","Circuit > Tape > Transformer"},
   {"1x","2x","4x","8x"},{"Off","Static","RMS Auto"}};
  for(int i=0;i<6;++i){auto& k=choices[(size_t)i];k.label.setText(clabels[i],juce::dontSendNotification);k.label.setColour(juce::Label::textColourId,cream);k.label.setJustificationType(juce::Justification::centredLeft);addAndMakeVisible(k.label);for(int j=0;j<options[i].size();++j)k.control.addItem(options[i][j],j+1);k.control.setColour(juce::ComboBox::backgroundColourId,panel);k.control.setColour(juce::ComboBox::textColourId,cream);k.control.setColour(juce::ComboBox::outlineColourId,amber);addAndMakeVisible(k.control);k.attach=std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(p.parameters,cids[i],k.control);}
  preOn.setButtonText("PRE FILTER ENABLED");postOn.setButtonText("POST FILTER ENABLED");
+ wowFlutterOn.setButtonText("MODEL WOW / FLUTTER");wowFlutterOn.setColour(juce::ToggleButton::textColourId,cream);addAndMakeVisible(wowFlutterOn);
+ wowFlutterAttach=std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.parameters,"wowFlutterOn",wowFlutterOn);
  for(auto* b:{&preOn,&postOn}){b->setColour(juce::ToggleButton::textColourId,cream);b->setColour(juce::ToggleButton::tickColourId,teal);addAndMakeVisible(*b);}
  preAttach=std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.parameters,"preOn",preOn);
  postAttach=std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.parameters,"postOn",postOn);
- setSize(1000,690);startTimerHz(20);
+ setSize(1000,745);startTimerHz(20);
 }
 void SaturatorEditor::timerCallback(){inDb=processor.inputMeter.load();outDb=processor.outputMeter.load();trimDb=processor.gainReduction.load();repaint(juce::Rectangle<int>(730,20,245,125));}
 void SaturatorEditor::paint(juce::Graphics& g){
  g.fillAll(bg);g.setColour(panel);g.fillRoundedRectangle(getLocalBounds().toFloat().reduced(12),12);g.setColour(amber);g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(12),12,2);
- g.setColour(cream);g.setFont(juce::Font(juce::FontOptions(31,juce::Font::bold)));g.drawText("SATURATOR   0.2",30,24,560,50,juce::Justification::centredLeft);
+ g.setColour(cream);g.setFont(juce::Font(juce::FontOptions(31,juce::Font::bold)));g.drawText("SATURATOR   0.3",30,24,560,50,juce::Justification::centredLeft);
  g.setFont(juce::Font(juce::FontOptions(12)));g.drawText("TRANSFORMER  /  TAPE  /  ANALOG CIRCUIT",32,76,600,24,juce::Justification::centredLeft);
  g.setColour(amber);g.drawLine(30,112,970,112,2);
  g.setColour(cream);g.setFont(juce::Font(juce::FontOptions(12)));
@@ -31,7 +33,7 @@ void SaturatorEditor::paint(juce::Graphics& g){
  drawMeter(inDb,27);drawMeter(outDb,67);g.setColour(cream);g.drawText("TRIM  "+juce::String(trimDb,1)+" dB",748,105,212,20,juce::Justification::centredRight);
  g.setColour(amber);g.drawLine(30,300,970,300,1);g.drawLine(30,489,970,489,1);
  g.setColour(cream);g.drawText("INPUT / DRIVE / OUTPUT",36,126,420,22,juce::Justification::centredLeft);g.drawText("PRE / POST FILTERING",36,316,420,22,juce::Justification::centredLeft);g.drawText("CHARACTER / BIAS / SIGNAL ROUTING",36,502,520,22,juce::Justification::centredLeft);
- g.setFont(juce::Font(juce::FontOptions(11)));g.drawText("Circuit-inspired behavioural models; not measured clones of named hardware.",34,654,900,20,juce::Justification::centredLeft);
+ g.setFont(juce::Font(juce::FontOptions(11)));g.drawText("Circuit-inspired behavioural models; not measured clones of named hardware.",34,708,900,20,juce::Justification::centredLeft);
 }
 void SaturatorEditor::resized(){
  for(int i=0;i<4;++i){auto& k=dials[(size_t)i];int x=35+i*155;k.control.setBounds(x,162,136,102);k.label.setBounds(x,263,136,21);}
@@ -39,5 +41,5 @@ void SaturatorEditor::resized(){
  for(int i=8;i<10;++i){auto& k=dials[(size_t)i];int x=35+(i-8)*155;k.control.setBounds(x,531,136,96);k.label.setBounds(x,626,136,20);}
  for(int i=0;i<3;++i){auto& k=choices[(size_t)i];k.label.setBounds(655,148+i*48,305,18);k.control.setBounds(655,166+i*48,305,27);}
  for(int i=3;i<6;++i){auto& k=choices[(size_t)i];k.label.setBounds(655,334+(i-3)*53,305,19);k.control.setBounds(655,353+(i-3)*53,305,27);}
- preOn.setBounds(370,549,220,35);postOn.setBounds(370,589,220,35);
+ preOn.setBounds(370,549,220,35);postOn.setBounds(370,589,220,35);wowFlutterOn.setBounds(655,516,300,30);
 }

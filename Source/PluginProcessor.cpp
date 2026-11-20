@@ -98,14 +98,27 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
   // HF self-erasure increases with level, especially at slower tape speeds.
   const float hfLoss=(x-s.tapeHigh)*(.03f+soft[model]*character*juce::jmin(1.f,std::abs(x*drive)));
   const float record=x-hfLoss+.04f*character*s.tapeLow;
-  const float magneticInput=record*drive*density[model];
-  const float equilibrium=std::tanh(magneticInput+bias*.22f);
+  // Calibrated nominal tape headroom: the tape stage should not hit
+  // magnetic saturation as early as the preamp/circuit stages.
+  // The independent Tape Drive control still allows deliberate overload.
+  constexpr float nominalTapeHeadroom=0.25f; // ~12 dB additional headroom
+  const float magneticDrive=juce::jmax(.001f,drive*density[model]*nominalTapeHeadroom);
+  const float magneticBias=bias*.22f;
+  const float magneticInput=record*magneticDrive;
+  const float equilibrium=std::tanh(magneticInput+magneticBias);
   const float inertia=cachedCoefficients[5];
   s.magnet=inertia*s.magnet+(1-inertia)*equilibrium;
-  const float tapeOutput=(.8f*equilibrium+.2f*s.magnet-std::tanh(bias*.22f))/juce::jmax(.1f,drive*density[model]);
-  // Head contour is deliberately subtle on the well-aligned A80.
+  // Normalise against the small-signal slope, not only the input gain.
+  // This prevents the tape stage losing level simply because bias is added.
+  const float biasResponse=std::tanh(magneticBias);
+  const float smallSignalSlope=juce::jmax(.1f,1.f-biasResponse*biasResponse);
+  const float tapeOutput=(.8f*equilibrium+.2f*s.magnet-biasResponse)/
+       (magneticDrive*smallSignalSlope);
+  // Preserve a modest direct path through the tape electronics so that
+  // magnetic compression is gradual rather than an abrupt level collapse.
+  const float magneticBlend=.82f;
   const float headBump=(model==4?.10f:.045f)*character*s.tapeLow;
-  return (1-soft[model]*.4f)*tapeOutput+soft[model]*.4f*x+headBump;
+  return (1.f-magneticBlend)*record+magneticBlend*tapeOutput+headBump;
  }
  int model=cachedModels[2];if(model==0)return x;
  const float capHz[]={0,18,32,8,25,45};

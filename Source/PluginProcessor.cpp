@@ -114,11 +114,11 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
   const float smallSignalSlope=juce::jmax(.1f,1.f-biasResponse*biasResponse);
   const float tapeOutput=(.8f*equilibrium+.2f*s.magnet-biasResponse)/
        (magneticDrive*smallSignalSlope);
-  // Preserve a modest direct path through the tape electronics so that
-  // magnetic compression is gradual rather than an abrupt level collapse.
-  const float magneticBlend=.82f;
+  // The recorded signal is entirely subject to magnetic saturation:
+  // no artificial parallel clean path to soften the saturation knee.
+  // Headroom is set by the calibrated record level above.
   const float headBump=(model==4?.10f:.045f)*character*s.tapeLow;
-  return (1.f-magneticBlend)*record+magneticBlend*tapeOutput+headBump;
+  return tapeOutput+headBump;
  }
  int model=cachedModels[2];if(model==0)return x;
  const float capHz[]={0,18,32,8,25,45};

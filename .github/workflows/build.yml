@@ -1,0 +1,18 @@
+name: Windows VST3
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --parallel 4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Saturator-Windows-VST3
+          path: build/Saturator_artefacts/Release/VST3/**
+          if-no-files-found: error

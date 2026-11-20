@@ -8,13 +8,13 @@ SaturatorEditor::SaturatorEditor(SaturatorProcessor& p):AudioProcessorEditor(p),
  const char* clabels[]={"TRANSFORMER MODEL","TAPE MODEL","CIRCUIT TOPOLOGY","SIGNAL CHAIN ORDER","OVERSAMPLING","GAIN COMPENSATION"};
  const juce::StringArray options[]={
   {"Off","Neve 10468 Input","Neve LO1166 Output","API 2622 + 2520","API 2520 + 2503","1176 UTC Input","1176 Class A Output","1176 Rev F Output"},
-  {"Off","Studer A80 15 IPS","Studer A80 30 IPS","Nakamichi Dragon Metal","Studer J37 Abbey Road 15 IPS"},
+  {"Off","Studer A80 15 IPS","Studer A80 30 IPS","Nakamichi Dragon Metal","Studer J37 Abbey Road 15 IPS","Budget Cassette Ferric","Budget Cassette Metal"},
   {"Off","Discrete Class A","Class AB","Op-Amp","Triode Tube","Pentode Tube"},
   {"Transformer > Tape > Circuit","Transformer > Circuit > Tape","Tape > Transformer > Circuit","Tape > Circuit > Transformer","Circuit > Transformer > Tape","Circuit > Tape > Transformer"},
   {"1x","2x","4x","8x"},{"Off","Static","RMS Auto"}};
  for(int i=0;i<6;++i){auto& k=choices[(size_t)i];k.label.setText(clabels[i],juce::dontSendNotification);k.label.setColour(juce::Label::textColourId,cream);k.label.setJustificationType(juce::Justification::centredLeft);addAndMakeVisible(k.label);for(int j=0;j<options[i].size();++j)k.control.addItem(options[i][j],j+1);k.control.setColour(juce::ComboBox::backgroundColourId,panel);k.control.setColour(juce::ComboBox::textColourId,cream);k.control.setColour(juce::ComboBox::outlineColourId,amber);addAndMakeVisible(k.control);k.attach=std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(p.parameters,cids[i],k.control);}
  preOn.setButtonText("PRE FILTER ENABLED");postOn.setButtonText("POST FILTER ENABLED");
- wowFlutterOn.setButtonText("MODEL WOW / FLUTTER");wowFlutterOn.setColour(juce::ToggleButton::textColourId,cream);addAndMakeVisible(wowFlutterOn);
+ wowFlutterOn.setButtonText("WOW / FLUTTER (CASSETTE ALWAYS ON)");wowFlutterOn.setColour(juce::ToggleButton::textColourId,cream);addAndMakeVisible(wowFlutterOn);
  wowFlutterAttach=std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.parameters,"wowFlutterOn",wowFlutterOn);
  for(auto* b:{&preOn,&postOn}){b->setColour(juce::ToggleButton::textColourId,cream);b->setColour(juce::ToggleButton::tickColourId,teal);addAndMakeVisible(*b);}
  preAttach=std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.parameters,"preOn",preOn);

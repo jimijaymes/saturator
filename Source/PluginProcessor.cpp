@@ -20,6 +20,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SaturatorProcessor::layout()
  auto add=[&](const char* id,const char* name,float low,float high,float def,float skew=1.f){v.add(std::make_unique<F>(juce::ParameterID{id,1},name,juce::NormalisableRange<float>(low,high,.1f,skew),def));};
  add("input","Input dB",-24,24,0);add("output","Output dB",-24,24,0);
  add("drive","Drive dB",0,36,12);add("mix","Mix %",0,100,100);
+ add("transformerDrive","Transformer Drive dB",-24,24,0);
+ add("tapeDrive","Tape Drive dB",-24,24,0);
+ add("circuitDrive","Circuit Drive dB",-24,24,0);
  add("preHP","Pre HP Hz",10,1500,20,.4f);add("preLP","Pre LP Hz",1000,20000,20000,.5f);
  add("postHP","Post HP Hz",10,1500,20,.4f);add("postLP","Post LP Hz",1000,20000,20000,.5f);
  add("character","Character %",0,100,50);add("bias","Bias %",-100,100,0);
@@ -108,7 +111,19 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
  float y=signal;
  switch(model){
   case 1: y=sat(signal+.18f+bias*.18f)-sat(.18f+bias*.18f);break;
-  case 2: {float cross=.035f+.08f*character;float a=std::abs(signal);y=std::copysign(juce::jmax(0.f,a-cross),signal);y=sat(y*1.15f);break;}
+  case 2: {
+   // A correctly biased push-pull Class AB stage has no hard dead zone.
+   // Smooth transfer between devices; residual crossover distortion
+   // depends on the bias control and is small near the default bias.
+   const float imbalance=juce::jlimit(0.f,1.f,std::abs(bias));
+   const float crossover=.003f+.016f*character+.025f*imbalance;
+   const float smoothWidth=.045f+.025f*(1.f-character);
+   const float softSign=signal/std::sqrt(signal*signal+smoothWidth*smoothWidth);
+   const float slope=1.f-crossover/smoothWidth;
+   const float compensated=(signal-crossover*softSign)/juce::jmax(.65f,slope);
+   y=std::tanh(compensated*.88f)/.88f;
+   break;
+  }
   case 3: y=juce::jlimit(-1.05f,1.05f,signal+.04f*signal*signal);break;
   case 4: y=sat(signal*.8f+.28f+bias*.25f)-sat(.28f+bias*.25f);break;
   case 5: y=sat(signal*1.35f+.45f+bias*.3f)-sat(.45f+bias*.3f);break;
@@ -120,6 +135,9 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
 void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count,int channels,int osIndex){
  const float in=d(*parameters.getRawParameterValue("input")),out=d(*parameters.getRawParameterValue("output"));
  const float driveDb=*parameters.getRawParameterValue("drive"),drive=d(driveDb);
+ const float stageDrive[3]={drive*d(*parameters.getRawParameterValue("transformerDrive")),
+   drive*d(*parameters.getRawParameterValue("tapeDrive")),
+   drive*d(*parameters.getRawParameterValue("circuitDrive"))};
  const float character=*parameters.getRawParameterValue("character")*.01f;
  const float bias=*parameters.getRawParameterValue("bias")*.01f;
  const float mix=*parameters.getRawParameterValue("mix")*.01f;
@@ -146,7 +164,7 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
   for(size_t i=0;i<up.getNumSamples();++i){
    float x=data[i];
    if(preOn)x=states[(size_t)c].pre.process(x,preHP,preLP,rate);
-   for(int st=0;st<3;++st)x=stage(x,c,orders[order][st],drive,character,bias,rate);
+   for(int st=0;st<3;++st){const int type=orders[order][st];x=stage(x,c,type,stageDrive[type],character,bias,rate);}
    if(postOn)x=states[(size_t)c].post.process(x,postHP,postLP,rate);
    data[i]=x;
   }

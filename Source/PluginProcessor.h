@@ -32,6 +32,10 @@ private:
  std::array<State,2> states{};
  std::array<std::vector<float>,2> tapeDelay;
  std::array<std::vector<float>,2> dryDelay;
+ std::array<std::vector<float>,2> wetDelay;
+ int fixedLatency=0;
+ int maxOversamplingLatency=0;
+ int transportLatency=0;
  int dryWrite=0, dryDelayLength=0;
  int cachedModels[3]{1,1,1};
  float cachedCoefficients[12]{};

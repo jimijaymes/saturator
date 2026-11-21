@@ -27,6 +27,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SaturatorProcessor::layout()
  add("preHP","Pre HP Hz",10,1500,20,.4f);add("preLP","Pre LP Hz",1000,20000,20000,.5f);
  add("postHP","Post HP Hz",10,1500,20,.4f);add("postLP","Post LP Hz",1000,20000,20000,.5f);
  add("character","Character %",0,100,50);add("bias","Bias %",-100,100,0);
+ add("broken","Broken %",0,100,0);
  v.add(std::make_unique<C>(juce::ParameterID{"transformer",1},"Transformer",juce::StringArray{"Off","Neve 10468 Input","Neve LO1166 Output","API 2622 + 2520","API 2520 + 2503","1176 UTC Input","1176 Class A Output","1176 Rev F Output"},1));
  v.add(std::make_unique<C>(juce::ParameterID{"transformer2",1},"Transformer 2",juce::StringArray{"Off","Neve 10468 Input","Neve LO1166 Output","API 2622 + 2520","API 2520 + 2503","1176 UTC Input","1176 Class A Output","1176 Rev F Output"},0));
  v.add(std::make_unique<C>(juce::ParameterID{"tape",1},"Tape",juce::StringArray{"Off","Studer A80 15 IPS","Studer A80 30 IPS","Nakamichi Dragon Metal","Studer J37 Abbey Road 15 IPS","Budget Cassette Ferric","Budget Cassette Metal"},1));
@@ -83,7 +84,10 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
   const float core=std::tanh(s.flux*magnetDrive[model]*drive*.22f+bias*.12f);
   const float coreDist=(core-s.flux*magnetDrive[model]*drive*.22f)*(.04f+.15f*character);
   const float amp=x*drive*(.65f+amplifierDrive[model]*character);
-  float ampY=std::tanh(amp+asym[model]+bias*.1f)-std::tanh(asym[model]+bias*.1f);
+  const float broken=juce::jlimit(0.f,1.f,(cachedBroken));
+  const float supply=1.f-.92f*std::pow(broken,2.4f);
+  const float starve=juce::jlimit(.02f,1.f,supply+.24f*std::abs(amp));
+  float ampY=starve*(std::tanh(amp/juce::jmax(.12f,supply)+asym[model]+bias*.1f)-std::tanh(asym[model]+bias*.1f));
   ampY/=juce::jmax(.1f,drive*(.65f+amplifierDrive[model]*character));
   // Blend a predominantly clean signal with amplifier compression and
   // the nonlinear magnetic branch; load response changes with model.
@@ -120,6 +124,9 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
   const float hfGain=1.f/(1.f+hfSensitivity[model]*hfOverload);
   const float record=x-hf*(1.f-hfGain)+.025f*character*s.tapeLow;
   const float magneticBias=bias*.12f;
+  const float broken=cachedBroken;
+  const float dropout=1.f-.90f*std::pow(broken,3.4f);
+  const float dropoutGate=juce::jlimit(.015f,1.f,dropout+.35f*std::abs(record));
   const float field=record*magneticDrive+magneticBias;
   // C1-continuous magnetic saturation: slope is exactly 1 below the
   // knee and remains continuous when approaching the saturation ceiling.
@@ -139,13 +146,17 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
   const float magneticOutput=.94f*equilibrium+.06f*s.magnet;
   const float tapeOutput=(magneticOutput-magnetise(magneticBias))/magneticDrive;
   const float headBump=(model>=5?.16f:(model==4?.10f:.045f))*character*s.tapeLow;
-  return tapeOutput+headBump;
+  return (tapeOutput+headBump)*dropoutGate;
  }
  int model=cachedModels[2];if(model==0)return x;
  const float capHz[]={0,18,32,8,25,45};
  float capPole=cachedCoefficients[6];
  s.circuitCap=capPole*s.circuitCap+(1-capPole)*x;
  float signal=(x-s.circuitCap)*drive;
+ const float broken=cachedBroken;
+ const float supply=1.f-.93f*std::pow(broken,2.6f);
+ const float starve=juce::jlimit(.015f,1.f,supply+.28f*std::abs(signal));
+ signal/=juce::jmax(.12f,supply);
  float y=signal;
  switch(model){
   case 1: y=sat(signal+.18f+bias*.18f)-sat(.18f+bias*.18f);break;
@@ -168,7 +179,7 @@ float SaturatorProcessor::stage(float x,int channel,int which,float drive,float 
  }
  float top=cachedCoefficients[7];
  s.circuitBias=top*s.circuitBias+(1-top)*y;
- return (y-.09f*character*(y-s.circuitBias))/juce::jmax(.1f,drive);
+ return starve*(y-.09f*character*(y-s.circuitBias))/juce::jmax(.1f,drive);
 }
 void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count,int channels,int osIndex){
  const float in=d(*parameters.getRawParameterValue("input")),out=d(*parameters.getRawParameterValue("output"));
@@ -178,7 +189,11 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
    drive*d(*parameters.getRawParameterValue("circuitDrive"))};
  const float transformer2Drive=drive*d(*parameters.getRawParameterValue("transformer2Drive"));
  const float character=*parameters.getRawParameterValue("character")*.01f;
+ const float broken=*parameters.getRawParameterValue("broken")*.01f;
+ cachedBroken=broken;
  const float bias=*parameters.getRawParameterValue("bias")*.01f;
+ // Increasing Broken removes operating bias from every active stage.
+ const float brokenBias=juce::jlimit(-1.f,1.f,bias-.95f*broken);
  const float mix=*parameters.getRawParameterValue("mix")*.01f;
  const float preHP=*parameters.getRawParameterValue("preHP"),preLP=*parameters.getRawParameterValue("preLP");
  const float postHP=*parameters.getRawParameterValue("postHP"),postLP=*parameters.getRawParameterValue("postLP");
@@ -230,9 +245,9 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
     const float high=x-f.hp;
     f.lp=cachedCoefficients[9]*f.lp+(1-cachedCoefficients[9])*high;
     x=f.lp;}
-   for(int st=0;st<3;++st){const int type=orders[order][st];x=stage(x,c,type,stageDrive[type],character,bias,rate);}
+   for(int st=0;st<3;++st){const int type=orders[order][st];x=stage(x,c,type,stageDrive[type],character,brokenBias,rate);}
    // Fourth saturation stage: independent transformer after the selectable three-stage chain.
-   x=stage(x,c,3,transformer2Drive,character,bias,rate);
+   x=stage(x,c,3,transformer2Drive,character,brokenBias,rate);
    if(postOn){auto& f=states[(size_t)c].post;
     f.hp=cachedCoefficients[10]*f.hp+(1-cachedCoefficients[10])*x;
     const float high=x-f.hp;
@@ -246,7 +261,7 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
  // Model-specific tape transport. The published weighted wow/flutter figures
  // are NOT equivalent to sinusoidal peak modulation; depths are estimates.
  const int tapeModel=cachedModels[1];
- const bool transportOn=(*parameters.getRawParameterValue("wowFlutterOn")>.5f || tapeModel>=5) && tapeModel>0;
+ const bool transportOn=(*parameters.getRawParameterValue("wowFlutterOn")>.5f || tapeModel>=5 || cachedBroken>.001f) && tapeModel>0;
  const float wowHz[]={0,.48f,.55f,.62f,.42f,.73f,.68f};
  const float flutterHz[]={0,8.2f,9.5f,12.3f,6.4f,11.5f,10.2f};
  const float wowPct[]={0,.00012f,.00010f,.00017f,.00034f,.0032f,.0021f};
@@ -263,7 +278,12 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
        +.12f*drift/(juce::MathConstants<float>::twoPi*.13f));
   const float flutterSamples=(float)sr*flutterPct[tapeModel]
       *(flutter/(juce::MathConstants<float>::twoPi*flutterHz[tapeModel]));
-  const float readDelay=juce::jlimit(1.f,(float)tapeDelayLength-3.f,delayBase+wowSamples+flutterSamples);
+  // Broken magnifies speed instability, adding irregular capstan drift.
+  const float damage=1.f+18.f*cachedBroken*cachedBroken;
+  const float rough=(float)sr*.00020f*cachedBroken*cachedBroken
+    *(std::sin((float)(juce::MathConstants<double>::twoPi*3.7*t))
+      +.38f*std::sin((float)(juce::MathConstants<double>::twoPi*17.3*t)));
+  const float readDelay=juce::jlimit(1.f,(float)tapeDelayLength-3.f,delayBase+damage*(wowSamples+flutterSamples)+rough);
   const float readPos=(float)tapeWrite-readDelay;
   const int index0=((int)std::floor(readPos)%tapeDelayLength+tapeDelayLength)%tapeDelayLength;
   const int index1=(index0+1)%tapeDelayLength;

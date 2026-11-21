@@ -42,7 +42,7 @@ private:
  float cachedBroken=0.f;
  bool cachedLofi=false;
  // Independent, cascaded per-stage filters: no cross-talk between stages.
- struct LofiState {float hp1=0,hp2=0,lp1=0,lp2=0;};
+ struct LofiState {float hp1=0,hp2=0,lp1=0,lp2=0,resonanceLow=0,resonanceBand=0,headLow=0;};
  std::array<std::array<LofiState,4>,2> lofiStates{};
  float cachedCoefficients[15]{};
  int tapeDelayLength=0,tapeWrite=0;

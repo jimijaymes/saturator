@@ -40,6 +40,10 @@ private:
  int dryWrite=0, dryDelayLength=0;
  int cachedModels[4]{1,1,1,0};
  float cachedBroken=0.f;
+ bool cachedLofi=false;
+ // Independent, cascaded per-stage filters: no cross-talk between stages.
+ struct LofiState {float hp1=0,hp2=0,lp1=0,lp2=0;};
+ std::array<std::array<LofiState,4>,2> lofiStates{};
  float cachedCoefficients[15]{};
  int tapeDelayLength=0,tapeWrite=0;
  double transportTime=0.0;
@@ -48,6 +52,7 @@ private:
  double sr=44100;
  int maxBlock=512;
  float stage(float,int,int,float,float,float,float);
+ float lofiBandwidth(float,int,int,float);
  void processChunk(juce::AudioBuffer<float>&,int,int,int);
  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SaturatorProcessor)
 };

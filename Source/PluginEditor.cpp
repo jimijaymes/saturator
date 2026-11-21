@@ -14,6 +14,8 @@ SaturatorEditor::SaturatorEditor(SaturatorProcessor& p):AudioProcessorEditor(p),
   {"1x","2x","4x","8x"},{"Off","Static","RMS Auto"},
   {"Off","Neve 10468 Input","Neve LO1166 Output","API 2622 + 2520","API 2520 + 2503","1176 UTC Input","1176 Class A Output","1176 Rev F Output"}};
  for(int i=0;i<7;++i){auto& k=choices[(size_t)i];k.label.setText(clabels[i],juce::dontSendNotification);k.label.setColour(juce::Label::textColourId,cream);k.label.setJustificationType(juce::Justification::centredLeft);addAndMakeVisible(k.label);for(int j=0;j<options[i].size();++j)k.control.addItem(options[i][j],j+1);k.control.setColour(juce::ComboBox::backgroundColourId,panel);k.control.setColour(juce::ComboBox::textColourId,cream);k.control.setColour(juce::ComboBox::outlineColourId,amber);addAndMakeVisible(k.control);k.attach=std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(p.parameters,cids[i],k.control);}
+ lofiOn.setButtonText("LO-FI / VINTAGE BANDWIDTH");lofiOn.setColour(juce::ToggleButton::textColourId,cream);addAndMakeVisible(lofiOn);
+ lofiAttach=std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.parameters,"lofi",lofiOn);
  preOn.setButtonText("PRE FILTER ENABLED");postOn.setButtonText("POST FILTER ENABLED");
  wowFlutterOn.setButtonText("WOW / FLUTTER (CASSETTE ALWAYS ON)");wowFlutterOn.setColour(juce::ToggleButton::textColourId,cream);addAndMakeVisible(wowFlutterOn);
  wowFlutterAttach=std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(p.parameters,"wowFlutterOn",wowFlutterOn);
@@ -34,7 +36,7 @@ void SaturatorEditor::paint(juce::Graphics& g){
  drawMeter(inDb,27);drawMeter(outDb,67);g.setColour(cream);g.drawText("TRIM  "+juce::String(trimDb,1)+" dB",748,105,212,20,juce::Justification::centredRight);
  g.setColour(amber);g.drawLine(30,300,970,300,1);g.drawLine(30,489,970,489,1);g.drawLine(30,700,970,700,1);
  g.setColour(cream);g.drawText("INPUT / DRIVE / OUTPUT",36,126,420,22,juce::Justification::centredLeft);g.drawText("PRE / POST FILTERING",36,316,420,22,juce::Justification::centredLeft);g.drawText("CHARACTER / BIAS / SIGNAL ROUTING",36,502,520,22,juce::Justification::centredLeft);g.drawText("INDIVIDUAL STAGE DRIVE OFFSETS",36,703,520,22,juce::Justification::centredLeft);
- g.drawText("TRANSFORMER 2 / BROKEN TAPE & CIRCUITS",36,876,650,22,juce::Justification::centredLeft);
+ g.drawText("TRANSFORMER 2 / BROKEN / LO-FI",36,876,650,22,juce::Justification::centredLeft);
  g.setFont(juce::Font(juce::FontOptions(11)));g.drawText("Stage drives offset master drive (0 dB = linked). Transformer 2 defaults to Off.",440,956,520,28,juce::Justification::centredRight);
 }
 void SaturatorEditor::resized(){
@@ -47,5 +49,5 @@ void SaturatorEditor::resized(){
  for(int i=0;i<3;++i){auto& k=choices[(size_t)i];k.label.setBounds(655,148+i*48,305,18);k.control.setBounds(655,166+i*48,305,27);}
  for(int i=3;i<6;++i){auto& k=choices[(size_t)i];k.label.setBounds(655,334+(i-3)*53,305,19);k.control.setBounds(655,353+(i-3)*53,305,27);}
  choices[6].label.setBounds(330,894,305,19);choices[6].control.setBounds(330,915,305,27);
- preOn.setBounds(370,549,220,35);postOn.setBounds(370,589,220,35);wowFlutterOn.setBounds(655,516,300,30);
+ preOn.setBounds(370,549,220,35);postOn.setBounds(370,589,220,35);wowFlutterOn.setBounds(655,516,300,30);lofiOn.setBounds(655,554,300,30);
 }

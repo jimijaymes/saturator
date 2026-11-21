@@ -65,33 +65,68 @@ void SaturatorProcessor::prepareToPlay(double sampleRate,int block){
 }
 float SaturatorProcessor::lofiBandwidth(float x,int channel,int which,float rate){
  if(!cachedLofi || cachedModels[which]==0)return x;
- // Stage-specific, intentionally worn equipment bandwidths, not measured units.
- // The Broken control progressively worsens ageing capacitors/head alignment.
+ // Component-inspired voicings, not measured impulse responses:
+ // tape: head-gap/spacing loss, reproduce EQ and head bump;
+ // preamp: coupling-capacitor bass loss, loaded transformer resonance;
+ // console: aged coupling caps and feedback-dependent presence.
  const int model=cachedModels[which];
- const float broken=cachedBroken;
- float hpHz=50.f,lpHz=8000.f;
- if(which==1){
-  // Neglected tape deck: head wear, alignment loss and low-end coupling.
-  hpHz=(model>=5?95.f:65.f)+broken*210.f;
-  lpHz=(model>=5?5900.f:7800.f)*std::pow(.48f,broken);
- }else if(which==2){
-  // Early console electronics: restricted top end and ageing coupling caps.
-  hpHz=(model>=4?65.f:45.f)+broken*140.f;
-  lpHz=(model>=4?7500.f:10500.f)*std::pow(.57f,broken);
- }else{
-  // Vintage preamp / transformer coupling with loaded high-frequency rolloff.
-  hpHz=(model==5?75.f:55.f)+broken*170.f;
-  lpHz=(model==5?7200.f:9300.f)*std::pow(.55f,broken);
- }
+ const float age=cachedBroken;
  auto& f=lofiStates[(size_t)channel][(size_t)which];
+ float hpHz,lpHz,resHz,resAmount,headHz=0.f,headAmount=0.f;
+ if(which==1){
+  // Spacing/azimuth loss is progressively steeper at short wavelengths,
+  // unlike a single low-pass cutoff. Tape speed/model set the voicing.
+  hpHz=(model>=5?65.f:35.f)+age*95.f;
+  lpHz=(model>=5?8500.f:(model==4?13500.f:16500.f))
+      *std::pow(.40f,age);
+  resHz=model>=5?105.f:65.f;
+  resAmount=.06f+.09f*age;
+  headHz=model>=5?125.f:72.f;
+  headAmount=(model>=5?.20f:.12f)*(1.f+.5f*age);
+ }else if(which==2){
+  // Older console electronics can exhibit modest midrange presence
+  // and low-frequency phase shift from cascaded coupling capacitors.
+  hpHz=(model>=4?38.f:25.f)+age*120.f;
+  lpHz=(model>=4?14500.f:18000.f)*std::pow(.55f,age);
+  resHz=model>=4?2100.f:3300.f;
+  resAmount=(model>=4?.14f:.10f)+.10f*age;
+ }else{
+  // Loaded preamp transformers can resonate before HF attenuation;
+  // loss of effective coupling capacitance raises the LF corner.
+  hpHz=(model==5?35.f:24.f)+age*140.f;
+  lpHz=(model==5?15500.f:19000.f)*std::pow(.52f,age);
+  resHz=model==5?6400.f:9000.f;
+  resAmount=.13f+.13f*age;
+ }
  const float h=p(hpHz,rate),l=p(lpHz,rate);
  f.hp1=h*f.hp1+(1.f-h)*x;
  float y=x-f.hp1;
+ // Separate coupling stages approximate the cumulative LF phase response.
  f.hp2=h*f.hp2+(1.f-h)*y;
- y-=f.hp2;
+ y-=.55f*f.hp2;
+ // Stable TPT state-variable resonant band-pass for transformer loading
+ // or console presence. Band energy is limited to avoid large peaks.
+ const float frequency=juce::jmin(resHz,rate*.35f);
+ const float g=std::tan(juce::MathConstants<float>::pi*frequency/rate);
+ const float damping=1.1f;
+ const float a1=1.f/(1.f+g*(g+damping));
+ const float high=(y-(damping+g)*f.resonanceBand-f.resonanceLow)*a1;
+ const float band=g*high+f.resonanceBand;
+ const float low=g*band+f.resonanceLow;
+ f.resonanceBand=g*high+band;
+ f.resonanceLow=g*band+low;
+ y+=resAmount*band;
+ if(which==1){
+  // Low-frequency head bump from reproduce head / EQ interaction.
+  const float headPole=p(headHz,rate);
+  f.headLow=headPole*f.headLow+(1.f-headPole)*y;
+  y+=headAmount*f.headLow;
+ }
+ // Tape spacing loss is steeper than a single pole. The second pole
+ // also approximates finite head-gap loss; other stages use milder loading.
  f.lp1=l*f.lp1+(1.f-l)*y;
  f.lp2=l*f.lp2+(1.f-l)*f.lp1;
- return f.lp2;
+ return which==1?f.lp2:(.28f*f.lp1+.72f*f.lp2);
 }
 float SaturatorProcessor::stage(float x,int channel,int which,float drive,float character,float bias,float rate){
  auto& s=(which==3?transformer2States:states)[(size_t)channel];

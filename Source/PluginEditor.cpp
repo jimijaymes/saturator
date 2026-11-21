@@ -1,9 +1,9 @@
 #include "PluginEditor.h"
 namespace {const juce::Colour bg(0xff151b21),panel(0xff253039),cream(0xfff3e7cf),amber(0xffd9a866),teal(0xff69c6b9);}
 SaturatorEditor::SaturatorEditor(SaturatorProcessor& p):AudioProcessorEditor(p),processor(p){
- const char* ids[]={"input","output","drive","mix","preHP","preLP","postHP","postLP","character","bias","transformerDrive","tapeDrive","circuitDrive","transformer2Drive"};
- const char* labels[]={"INPUT","OUTPUT","DRIVE","MIX","PRE HP","PRE LP","POST HP","POST LP","CHARACTER","BIAS","XFMR DRIVE","TAPE DRIVE","CIRCUIT DRIVE","XFMR 2 DRIVE"};
- for(int i=0;i<14;++i){auto& k=dials[(size_t)i];k.control.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);k.control.setTextBoxStyle(juce::Slider::TextBoxBelow,false,86,20);k.control.setColour(juce::Slider::rotarySliderFillColourId,i==2?teal:amber);k.control.setColour(juce::Slider::rotarySliderOutlineColourId,juce::Colour(0xff45515a));k.control.setColour(juce::Slider::textBoxTextColourId,cream);k.control.setColour(juce::Slider::textBoxOutlineColourId,juce::Colours::transparentBlack);k.control.setColour(juce::Slider::textBoxBackgroundColourId,juce::Colours::transparentBlack);addAndMakeVisible(k.control);k.label.setText(labels[i],juce::dontSendNotification);k.label.setJustificationType(juce::Justification::centred);k.label.setColour(juce::Label::textColourId,cream);addAndMakeVisible(k.label);k.attach=std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.parameters,ids[i],k.control);}
+ const char* ids[]={"input","output","drive","mix","preHP","preLP","postHP","postLP","character","bias","transformerDrive","tapeDrive","circuitDrive","transformer2Drive","broken"};
+ const char* labels[]={"INPUT","OUTPUT","DRIVE","MIX","PRE HP","PRE LP","POST HP","POST LP","CHARACTER","BIAS","XFMR DRIVE","TAPE DRIVE","CIRCUIT DRIVE","XFMR 2 DRIVE","BROKEN"};
+ for(int i=0;i<15;++i){auto& k=dials[(size_t)i];k.control.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);k.control.setTextBoxStyle(juce::Slider::TextBoxBelow,false,86,20);k.control.setColour(juce::Slider::rotarySliderFillColourId,i==2?teal:amber);k.control.setColour(juce::Slider::rotarySliderOutlineColourId,juce::Colour(0xff45515a));k.control.setColour(juce::Slider::textBoxTextColourId,cream);k.control.setColour(juce::Slider::textBoxOutlineColourId,juce::Colours::transparentBlack);k.control.setColour(juce::Slider::textBoxBackgroundColourId,juce::Colours::transparentBlack);addAndMakeVisible(k.control);k.label.setText(labels[i],juce::dontSendNotification);k.label.setJustificationType(juce::Justification::centred);k.label.setColour(juce::Label::textColourId,cream);addAndMakeVisible(k.label);k.attach=std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(p.parameters,ids[i],k.control);}
  const char* cids[]={"transformer","tape","circuit","order","oversampling","compensation","transformer2"};
  const char* clabels[]={"TRANSFORMER MODEL","TAPE MODEL","CIRCUIT TOPOLOGY","SIGNAL CHAIN ORDER","OVERSAMPLING","GAIN COMPENSATION","TRANSFORMER 2 MODEL"};
  const juce::StringArray options[]={
@@ -34,7 +34,7 @@ void SaturatorEditor::paint(juce::Graphics& g){
  drawMeter(inDb,27);drawMeter(outDb,67);g.setColour(cream);g.drawText("TRIM  "+juce::String(trimDb,1)+" dB",748,105,212,20,juce::Justification::centredRight);
  g.setColour(amber);g.drawLine(30,300,970,300,1);g.drawLine(30,489,970,489,1);g.drawLine(30,700,970,700,1);
  g.setColour(cream);g.drawText("INPUT / DRIVE / OUTPUT",36,126,420,22,juce::Justification::centredLeft);g.drawText("PRE / POST FILTERING",36,316,420,22,juce::Justification::centredLeft);g.drawText("CHARACTER / BIAS / SIGNAL ROUTING",36,502,520,22,juce::Justification::centredLeft);g.drawText("INDIVIDUAL STAGE DRIVE OFFSETS",36,703,520,22,juce::Justification::centredLeft);
- g.drawText("FOURTH STAGE  /  TRANSFORMER 2 (AFTER MAIN CHAIN)",36,876,650,22,juce::Justification::centredLeft);
+ g.drawText("TRANSFORMER 2 / BROKEN TAPE & CIRCUITS",36,876,650,22,juce::Justification::centredLeft);
  g.setFont(juce::Font(juce::FontOptions(11)));g.drawText("Stage drives offset master drive (0 dB = linked). Transformer 2 defaults to Off.",440,956,520,28,juce::Justification::centredRight);
 }
 void SaturatorEditor::resized(){
@@ -43,6 +43,7 @@ void SaturatorEditor::resized(){
  for(int i=8;i<10;++i){auto& k=dials[(size_t)i];int x=35+(i-8)*155;k.control.setBounds(x,531,136,96);k.label.setBounds(x,626,136,20);}
  for(int i=10;i<13;++i){auto& k=dials[(size_t)i];int x=35+(i-10)*155;k.control.setBounds(x,720,136,88);k.label.setBounds(x,808,136,20);}
  dials[13].control.setBounds(35,890,136,72);dials[13].label.setBounds(35,962,136,20);
+ dials[14].control.setBounds(180,890,136,72);dials[14].label.setBounds(180,962,136,20);
  for(int i=0;i<3;++i){auto& k=choices[(size_t)i];k.label.setBounds(655,148+i*48,305,18);k.control.setBounds(655,166+i*48,305,27);}
  for(int i=3;i<6;++i){auto& k=choices[(size_t)i];k.label.setBounds(655,334+(i-3)*53,305,19);k.control.setBounds(655,353+(i-3)*53,305,27);}
  choices[6].label.setBounds(330,894,305,19);choices[6].control.setBounds(330,915,305,27);

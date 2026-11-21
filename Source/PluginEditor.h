@@ -20,8 +20,8 @@ private:
  };
  std::array<Dial,15> dials;
  std::array<Choice,7> choices;
- juce::ToggleButton preOn,postOn,wowFlutterOn;
- std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> preAttach,postAttach,wowFlutterAttach;
+ juce::ToggleButton preOn,postOn,wowFlutterOn,lofiOn;
+ std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> preAttach,postAttach,wowFlutterAttach,lofiAttach;
  float inDb=-100,outDb=-100,trimDb=0;
  JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SaturatorEditor)
 };

@@ -21,12 +21,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout SaturatorProcessor::layout()
  add("input","Input dB",-24,24,0);add("output","Output dB",-24,24,0);
  add("drive","Drive dB",0,36,12);add("mix","Mix %",0,100,100);
  add("transformerDrive","Transformer Drive dB",-24,24,0);
+ add("transformer2Drive","Transformer 2 Drive dB",-24,24,0);
  add("tapeDrive","Tape Drive dB",-24,24,0);
  add("circuitDrive","Circuit Drive dB",-24,24,0);
  add("preHP","Pre HP Hz",10,1500,20,.4f);add("preLP","Pre LP Hz",1000,20000,20000,.5f);
  add("postHP","Post HP Hz",10,1500,20,.4f);add("postLP","Post LP Hz",1000,20000,20000,.5f);
  add("character","Character %",0,100,50);add("bias","Bias %",-100,100,0);
  v.add(std::make_unique<C>(juce::ParameterID{"transformer",1},"Transformer",juce::StringArray{"Off","Neve 10468 Input","Neve LO1166 Output","API 2622 + 2520","API 2520 + 2503","1176 UTC Input","1176 Class A Output","1176 Rev F Output"},1));
+ v.add(std::make_unique<C>(juce::ParameterID{"transformer2",1},"Transformer 2",juce::StringArray{"Off","Neve 10468 Input","Neve LO1166 Output","API 2622 + 2520","API 2520 + 2503","1176 UTC Input","1176 Class A Output","1176 Rev F Output"},0));
  v.add(std::make_unique<C>(juce::ParameterID{"tape",1},"Tape",juce::StringArray{"Off","Studer A80 15 IPS","Studer A80 30 IPS","Nakamichi Dragon Metal","Studer J37 Abbey Road 15 IPS","Budget Cassette Ferric","Budget Cassette Metal"},1));
  v.add(std::make_unique<C>(juce::ParameterID{"circuit",1},"Circuit",juce::StringArray{"Off","Discrete Class A","Class AB","Op-Amp","Triode Tube","Pentode Tube"},1));
  v.add(std::make_unique<C>(juce::ParameterID{"order",1},"Stage Order",juce::StringArray{"Transformer > Tape > Circuit","Transformer > Circuit > Tape","Tape > Transformer > Circuit","Tape > Circuit > Transformer","Circuit > Transformer > Tape","Circuit > Tape > Transformer"},0));
@@ -39,7 +41,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SaturatorProcessor::layout()
 }
 SaturatorProcessor::SaturatorProcessor():AudioProcessor(BusesProperties().withInput("Input",juce::AudioChannelSet::stereo(),true).withOutput("Output",juce::AudioChannelSet::stereo(),true)),parameters(*this,nullptr,"STATE",layout()){}
 void SaturatorProcessor::prepareToPlay(double sampleRate,int block){
- sr=sampleRate;maxBlock=juce::jmax(1,block);states={};scratch.setSize(2,maxBlock);
+ sr=sampleRate;maxBlock=juce::jmax(1,block);states={};transformer2States={};scratch.setSize(2,maxBlock);
  tapeDelayLength=juce::jmax(512,(int)std::ceil(sr*.08));
  for(auto& line:tapeDelay)line.assign((size_t)tapeDelayLength,0.f);
  tapeWrite=0;transportTime=0;
@@ -60,23 +62,23 @@ void SaturatorProcessor::prepareToPlay(double sampleRate,int block){
  setLatencySamples(fixedLatency);
 }
 float SaturatorProcessor::stage(float x,int channel,int which,float drive,float character,float bias,float rate){
- auto& s=states[(size_t)channel];
- if(which==0){
+ auto& s=(which==3?transformer2States:states)[(size_t)channel];
+ if(which==0||which==3){
   // Complete equipment-stage voicings: transformer, drive amplifier and loading.
   // Magnetic parameters are deliberately estimated; these are not measured clones.
-  int model=cachedModels[0];if(model==0)return x;
+  int model=cachedModels[which==3?3:0];if(model==0)return x;
   const float hp[]={0,22,12,24,9,28,14,18};
   const float lp[]={0,19000,17500,21000,22000,15500,18500,19500};
   const float asym[]={0,.035f,.085f,.075f,.045f,.02f,.095f,.045f};
   const float magnetDrive[]={0,.65f,1.1f,.8f,1.3f,.7f,1.35f,1.0f};
   const float amplifierDrive[]={0,.25f,.9f,.8f,1.1f,.2f,1.0f,1.15f};
-  const float lowPole=cachedCoefficients[0],highPole=cachedCoefficients[1];
+  const float lowPole=cachedCoefficients[which==3?12:0],highPole=cachedCoefficients[which==3?13:1];
   s.coreLow=lowPole*s.coreLow+(1-lowPole)*x;
   s.coreHigh=highPole*s.coreHigh+(1-highPole)*x;
   const float ac=x-s.coreLow;
   // Core flux is driven by a leaky integral of voltage; low frequencies
   // generate greater flux for equal signal voltage, unlike static waveshaping.
-  const float leak=cachedCoefficients[2];
+  const float leak=cachedCoefficients[which==3?14:2];
   s.flux=leak*s.flux+(1-leak)*ac*(140.f/juce::jmax(10.f,hp[model]));
   const float core=std::tanh(s.flux*magnetDrive[model]*drive*.22f+bias*.12f);
   const float coreDist=(core-s.flux*magnetDrive[model]*drive*.22f)*(.04f+.15f*character);
@@ -174,6 +176,7 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
  const float stageDrive[3]={drive*d(*parameters.getRawParameterValue("transformerDrive")),
    drive*d(*parameters.getRawParameterValue("tapeDrive")),
    drive*d(*parameters.getRawParameterValue("circuitDrive"))};
+ const float transformer2Drive=drive*d(*parameters.getRawParameterValue("transformer2Drive"));
  const float character=*parameters.getRawParameterValue("character")*.01f;
  const float bias=*parameters.getRawParameterValue("bias")*.01f;
  const float mix=*parameters.getRawParameterValue("mix")*.01f;
@@ -196,6 +199,7 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
  auto up=os.processSamplesUp(constInput);
  const float rate=(float)sr*(float)os.getOversamplingFactor();
  cachedModels[0]=juce::jlimit(0,7,(int)*parameters.getRawParameterValue("transformer"));
+ cachedModels[3]=juce::jlimit(0,7,(int)*parameters.getRawParameterValue("transformer2"));
  cachedModels[1]=juce::jlimit(0,6,(int)*parameters.getRawParameterValue("tape"));
  cachedModels[2]=juce::jlimit(0,5,(int)*parameters.getRawParameterValue("circuit"));
  const float xfHP[]={0,22,12,24,9,28,14,18};
@@ -205,6 +209,9 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
  cachedCoefficients[0]=p(xfHP[cachedModels[0]],rate);
  cachedCoefficients[1]=p(xfLP[cachedModels[0]],rate);
  cachedCoefficients[2]=p(xfHP[cachedModels[0]]*.55f,rate);
+ cachedCoefficients[12]=p(xfHP[cachedModels[3]],rate);
+ cachedCoefficients[13]=p(xfLP[cachedModels[3]],rate);
+ cachedCoefficients[14]=p(xfHP[cachedModels[3]]*.55f,rate);
  cachedCoefficients[3]=p(tapeLP[cachedModels[1]],rate);
  cachedCoefficients[4]=p(tapeHP[cachedModels[1]],rate);
  cachedCoefficients[5]=p(cachedModels[1]>=5?360.f:(cachedModels[1]==4?500.f:2100.f),rate);
@@ -224,6 +231,8 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
     f.lp=cachedCoefficients[9]*f.lp+(1-cachedCoefficients[9])*high;
     x=f.lp;}
    for(int st=0;st<3;++st){const int type=orders[order][st];x=stage(x,c,type,stageDrive[type],character,bias,rate);}
+   // Fourth saturation stage: independent transformer after the selectable three-stage chain.
+   x=stage(x,c,3,transformer2Drive,character,bias,rate);
    if(postOn){auto& f=states[(size_t)c].post;
     f.hp=cachedCoefficients[10]*f.hp+(1-cachedCoefficients[10])*x;
     const float high=x-f.hp;

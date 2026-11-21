@@ -18,7 +18,7 @@ private:
   juce::Label label;
   std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> attach;
  };
- std::array<Dial,14> dials;
+ std::array<Dial,15> dials;
  std::array<Choice,7> choices;
  juce::ToggleButton preOn,postOn,wowFlutterOn;
  std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> preAttach,postAttach,wowFlutterAttach;

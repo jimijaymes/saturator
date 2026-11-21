@@ -30,6 +30,7 @@ private:
  struct Filter {float lp=0,hp=0; float process(float x,float hpHz,float lpHz,float sr);};
  struct State {Filter pre,post;float flux=0,magnet=0,tapePrev=0,tapeLow=0,tapeHigh=0,tapeHFEnv=0,coreLow=0,coreHigh=0,circuitCap=0,circuitBias=0;};
  std::array<State,2> states{};
+ std::array<State,2> transformer2States{};
  std::array<std::vector<float>,2> tapeDelay;
  std::array<std::vector<float>,2> dryDelay;
  std::array<std::vector<float>,2> wetDelay;
@@ -37,8 +38,8 @@ private:
  int maxOversamplingLatency=0;
  int transportLatency=0;
  int dryWrite=0, dryDelayLength=0;
- int cachedModels[3]{1,1,1};
- float cachedCoefficients[12]{};
+ int cachedModels[4]{1,1,1,0};
+ float cachedCoefficients[15]{};
  int tapeDelayLength=0,tapeWrite=0;
  double transportTime=0.0;
  std::array<std::unique_ptr<juce::dsp::Oversampling<float>>,4> oversamplers;

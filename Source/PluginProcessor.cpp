@@ -28,6 +28,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SaturatorProcessor::layout()
  add("postHP","Post HP Hz",10,1500,20,.4f);add("postLP","Post LP Hz",1000,20000,20000,.5f);
  add("character","Character %",0,100,50);add("bias","Bias %",-100,100,0);
  add("broken","Broken %",0,100,0);
+ v.add(std::make_unique<B>(juce::ParameterID{"lofi",1},"Lo-Fi Bandwidth",false));
  v.add(std::make_unique<C>(juce::ParameterID{"transformer",1},"Transformer",juce::StringArray{"Off","Neve 10468 Input","Neve LO1166 Output","API 2622 + 2520","API 2520 + 2503","1176 UTC Input","1176 Class A Output","1176 Rev F Output"},1));
  v.add(std::make_unique<C>(juce::ParameterID{"transformer2",1},"Transformer 2",juce::StringArray{"Off","Neve 10468 Input","Neve LO1166 Output","API 2622 + 2520","API 2520 + 2503","1176 UTC Input","1176 Class A Output","1176 Rev F Output"},0));
  v.add(std::make_unique<C>(juce::ParameterID{"tape",1},"Tape",juce::StringArray{"Off","Studer A80 15 IPS","Studer A80 30 IPS","Nakamichi Dragon Metal","Studer J37 Abbey Road 15 IPS","Budget Cassette Ferric","Budget Cassette Metal"},1));
@@ -42,7 +43,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SaturatorProcessor::layout()
 }
 SaturatorProcessor::SaturatorProcessor():AudioProcessor(BusesProperties().withInput("Input",juce::AudioChannelSet::stereo(),true).withOutput("Output",juce::AudioChannelSet::stereo(),true)),parameters(*this,nullptr,"STATE",layout()){}
 void SaturatorProcessor::prepareToPlay(double sampleRate,int block){
- sr=sampleRate;maxBlock=juce::jmax(1,block);states={};transformer2States={};scratch.setSize(2,maxBlock);
+ sr=sampleRate;maxBlock=juce::jmax(1,block);states={};transformer2States={};lofiStates={};scratch.setSize(2,maxBlock);
  tapeDelayLength=juce::jmax(512,(int)std::ceil(sr*.08));
  for(auto& line:tapeDelay)line.assign((size_t)tapeDelayLength,0.f);
  tapeWrite=0;transportTime=0;
@@ -61,6 +62,36 @@ void SaturatorProcessor::prepareToPlay(double sampleRate,int block){
  transportLatency=(int)std::round(sr*.025);
  fixedLatency=maxOversamplingLatency+transportLatency;
  setLatencySamples(fixedLatency);
+}
+float SaturatorProcessor::lofiBandwidth(float x,int channel,int which,float rate){
+ if(!cachedLofi || cachedModels[which]==0)return x;
+ // Stage-specific, intentionally worn equipment bandwidths, not measured units.
+ // The Broken control progressively worsens ageing capacitors/head alignment.
+ const int model=cachedModels[which];
+ const float broken=cachedBroken;
+ float hpHz=50.f,lpHz=8000.f;
+ if(which==1){
+  // Neglected tape deck: head wear, alignment loss and low-end coupling.
+  hpHz=(model>=5?95.f:65.f)+broken*210.f;
+  lpHz=(model>=5?5900.f:7800.f)*std::pow(.48f,broken);
+ }else if(which==2){
+  // Early console electronics: restricted top end and ageing coupling caps.
+  hpHz=(model>=4?65.f:45.f)+broken*140.f;
+  lpHz=(model>=4?7500.f:10500.f)*std::pow(.57f,broken);
+ }else{
+  // Vintage preamp / transformer coupling with loaded high-frequency rolloff.
+  hpHz=(model==5?75.f:55.f)+broken*170.f;
+  lpHz=(model==5?7200.f:9300.f)*std::pow(.55f,broken);
+ }
+ auto& f=lofiStates[(size_t)channel][(size_t)which];
+ const float h=p(hpHz,rate),l=p(lpHz,rate);
+ f.hp1=h*f.hp1+(1.f-h)*x;
+ float y=x-f.hp1;
+ f.hp2=h*f.hp2+(1.f-h)*y;
+ y-=f.hp2;
+ f.lp1=l*f.lp1+(1.f-l)*y;
+ f.lp2=l*f.lp2+(1.f-l)*f.lp1;
+ return f.lp2;
 }
 float SaturatorProcessor::stage(float x,int channel,int which,float drive,float character,float bias,float rate){
  auto& s=(which==3?transformer2States:states)[(size_t)channel];
@@ -191,6 +222,7 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
  const float character=*parameters.getRawParameterValue("character")*.01f;
  const float broken=*parameters.getRawParameterValue("broken")*.01f;
  cachedBroken=broken;
+ cachedLofi=*parameters.getRawParameterValue("lofi")>.5f;
  const float bias=*parameters.getRawParameterValue("bias")*.01f;
  // Increasing Broken removes operating bias from every active stage.
  const float brokenBias=juce::jlimit(-1.f,1.f,bias-.95f*broken);
@@ -245,9 +277,9 @@ void SaturatorProcessor::processChunk(juce::AudioBuffer<float>& buffer,int count
     const float high=x-f.hp;
     f.lp=cachedCoefficients[9]*f.lp+(1-cachedCoefficients[9])*high;
     x=f.lp;}
-   for(int st=0;st<3;++st){const int type=orders[order][st];x=stage(x,c,type,stageDrive[type],character,brokenBias,rate);}
+   for(int st=0;st<3;++st){const int type=orders[order][st];x=stage(x,c,type,stageDrive[type],character,brokenBias,rate);x=lofiBandwidth(x,c,type,rate);}
    // Fourth saturation stage: independent transformer after the selectable three-stage chain.
-   x=stage(x,c,3,transformer2Drive,character,brokenBias,rate);
+   x=stage(x,c,3,transformer2Drive,character,brokenBias,rate);x=lofiBandwidth(x,c,3,rate);
    if(postOn){auto& f=states[(size_t)c].post;
     f.hp=cachedCoefficients[10]*f.hp+(1-cachedCoefficients[10])*x;
     const float high=x-f.hp;

@@ -39,6 +39,7 @@ private:
  int transportLatency=0;
  int dryWrite=0, dryDelayLength=0;
  int cachedModels[4]{1,1,1,0};
+ float cachedBroken=0.f;
  float cachedCoefficients[15]{};
  int tapeDelayLength=0,tapeWrite=0;
  double transportTime=0.0;
